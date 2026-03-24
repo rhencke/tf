@@ -125,3 +125,43 @@ class TypesTest(TestCase):
         self.assertFalse(set_type.semantically_equal([{"a": 1}], [{"a": 1}, {"b": 2}]))
         # Empty lists
         self.assertTrue(set_type.semantically_equal([], []))
+
+    def test_map_encode(self):
+        map_type = types.Map(types.String())
+
+        self.assertIsNone(map_type.encode(None))
+        self.assertIsNone(map_type.decode(None))
+        self.assertIs(map_type.encode(Unknown), Unknown)
+        self.assertIs(map_type.decode(Unknown), Unknown)
+
+        self.assertEqual(map_type.encode({"a": "x", "b": "y"}), {"a": "x", "b": "y"})
+        self.assertEqual(map_type.decode({"a": "x", "b": "y"}), {"a": "x", "b": "y"})
+
+    def test_map_encode_delegates_to_value_type(self):
+        """Map.encode/decode applies the value type to each value."""
+        from tf.types import NormalizedJson
+
+        map_type = types.Map(NormalizedJson())
+        self.assertEqual(map_type.encode({"k": {"a": 1}}), {"k": '{"a": 1}'})
+        self.assertEqual(map_type.decode({"k": '{"a": 1}'}), {"k": {"a": 1}})
+
+    def test_map_type_encoding(self):
+        table = (
+            (types.Map(types.String()), "map of string", b'["map","string"]'),
+            (types.Map(types.Number()), "map of number", b'["map","number"]'),
+            (types.Map(types.Bool()), "map of bool", b'["map","bool"]'),
+            (types.Map(types.List(types.String())), "map of list of string", b'["map",["list","string"]]'),
+        )
+        for map_type, test_name, expected in table:
+            with self.subTest(test_name):
+                self.assertEqual(map_type.tf_type(), expected)
+
+    def test_map_semantic_equality(self):
+        map_type = types.Map(types.String())
+
+        self.assertTrue(map_type.semantically_equal({"a": "x"}, {"a": "x"}))
+        self.assertFalse(map_type.semantically_equal({"a": "x"}, {"a": "y"}))
+        self.assertFalse(map_type.semantically_equal({"a": "x"}, {"b": "x"}))
+        self.assertTrue(map_type.semantically_equal(None, None))
+        self.assertTrue(map_type.semantically_equal(Unknown, Unknown))
+        self.assertTrue(map_type.semantically_equal({}, {}))
