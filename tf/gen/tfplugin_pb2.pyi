@@ -1,8 +1,12 @@
+import datetime
+
+from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -109,7 +113,7 @@ class Schema(_message.Message):
         deprecated: bool
         def __init__(self, version: _Optional[int] = ..., attributes: _Optional[_Iterable[_Union[Schema.Attribute, _Mapping]]] = ..., block_types: _Optional[_Iterable[_Union[Schema.NestedBlock, _Mapping]]] = ..., description: _Optional[str] = ..., description_kind: _Optional[_Union[StringKind, str]] = ..., deprecated: bool = ...) -> None: ...
     class Attribute(_message.Message):
-        __slots__ = ("name", "type", "nested_type", "description", "required", "optional", "computed", "sensitive", "description_kind", "deprecated")
+        __slots__ = ("name", "type", "nested_type", "description", "required", "optional", "computed", "sensitive", "description_kind", "deprecated", "write_only")
         NAME_FIELD_NUMBER: _ClassVar[int]
         TYPE_FIELD_NUMBER: _ClassVar[int]
         NESTED_TYPE_FIELD_NUMBER: _ClassVar[int]
@@ -120,6 +124,7 @@ class Schema(_message.Message):
         SENSITIVE_FIELD_NUMBER: _ClassVar[int]
         DESCRIPTION_KIND_FIELD_NUMBER: _ClassVar[int]
         DEPRECATED_FIELD_NUMBER: _ClassVar[int]
+        WRITE_ONLY_FIELD_NUMBER: _ClassVar[int]
         name: str
         type: bytes
         nested_type: Schema.Object
@@ -130,7 +135,8 @@ class Schema(_message.Message):
         sensitive: bool
         description_kind: StringKind
         deprecated: bool
-        def __init__(self, name: _Optional[str] = ..., type: _Optional[bytes] = ..., nested_type: _Optional[_Union[Schema.Object, _Mapping]] = ..., description: _Optional[str] = ..., required: bool = ..., optional: bool = ..., computed: bool = ..., sensitive: bool = ..., description_kind: _Optional[_Union[StringKind, str]] = ..., deprecated: bool = ...) -> None: ...
+        write_only: bool
+        def __init__(self, name: _Optional[str] = ..., type: _Optional[bytes] = ..., nested_type: _Optional[_Union[Schema.Object, _Mapping]] = ..., description: _Optional[str] = ..., required: bool = ..., optional: bool = ..., computed: bool = ..., sensitive: bool = ..., description_kind: _Optional[_Union[StringKind, str]] = ..., deprecated: bool = ..., write_only: bool = ...) -> None: ...
     class NestedBlock(_message.Message):
         __slots__ = ("type_name", "block", "nesting", "min_items", "max_items")
         class NestingMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
@@ -187,6 +193,33 @@ class Schema(_message.Message):
     block: Schema.Block
     def __init__(self, version: _Optional[int] = ..., block: _Optional[_Union[Schema.Block, _Mapping]] = ...) -> None: ...
 
+class ResourceIdentitySchema(_message.Message):
+    __slots__ = ("version", "identity_attributes")
+    class IdentityAttribute(_message.Message):
+        __slots__ = ("name", "type", "required_for_import", "optional_for_import", "description")
+        NAME_FIELD_NUMBER: _ClassVar[int]
+        TYPE_FIELD_NUMBER: _ClassVar[int]
+        REQUIRED_FOR_IMPORT_FIELD_NUMBER: _ClassVar[int]
+        OPTIONAL_FOR_IMPORT_FIELD_NUMBER: _ClassVar[int]
+        DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+        name: str
+        type: bytes
+        required_for_import: bool
+        optional_for_import: bool
+        description: str
+        def __init__(self, name: _Optional[str] = ..., type: _Optional[bytes] = ..., required_for_import: bool = ..., optional_for_import: bool = ..., description: _Optional[str] = ...) -> None: ...
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    IDENTITY_ATTRIBUTES_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    identity_attributes: _containers.RepeatedCompositeFieldContainer[ResourceIdentitySchema.IdentityAttribute]
+    def __init__(self, version: _Optional[int] = ..., identity_attributes: _Optional[_Iterable[_Union[ResourceIdentitySchema.IdentityAttribute, _Mapping]]] = ...) -> None: ...
+
+class ResourceIdentityData(_message.Message):
+    __slots__ = ("identity_data",)
+    IDENTITY_DATA_FIELD_NUMBER: _ClassVar[int]
+    identity_data: DynamicValue
+    def __init__(self, identity_data: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+
 class Function(_message.Message):
     __slots__ = ("parameters", "variadic_parameter", "summary", "description", "description_kind", "deprecation_message")
     class Parameter(_message.Message):
@@ -234,24 +267,50 @@ class ServerCapabilities(_message.Message):
     move_resource_state: bool
     def __init__(self, plan_destroy: bool = ..., get_provider_schema_optional: bool = ..., move_resource_state: bool = ...) -> None: ...
 
+class ClientCapabilities(_message.Message):
+    __slots__ = ("deferral_allowed", "write_only_attributes_allowed")
+    DEFERRAL_ALLOWED_FIELD_NUMBER: _ClassVar[int]
+    WRITE_ONLY_ATTRIBUTES_ALLOWED_FIELD_NUMBER: _ClassVar[int]
+    deferral_allowed: bool
+    write_only_attributes_allowed: bool
+    def __init__(self, deferral_allowed: bool = ..., write_only_attributes_allowed: bool = ...) -> None: ...
+
+class Deferred(_message.Message):
+    __slots__ = ("reason",)
+    class Reason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        UNKNOWN: _ClassVar[Deferred.Reason]
+        RESOURCE_CONFIG_UNKNOWN: _ClassVar[Deferred.Reason]
+        PROVIDER_CONFIG_UNKNOWN: _ClassVar[Deferred.Reason]
+        ABSENT_PREREQ: _ClassVar[Deferred.Reason]
+    UNKNOWN: Deferred.Reason
+    RESOURCE_CONFIG_UNKNOWN: Deferred.Reason
+    PROVIDER_CONFIG_UNKNOWN: Deferred.Reason
+    ABSENT_PREREQ: Deferred.Reason
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    reason: Deferred.Reason
+    def __init__(self, reason: _Optional[_Union[Deferred.Reason, str]] = ...) -> None: ...
+
 class GetMetadata(_message.Message):
     __slots__ = ()
     class Request(_message.Message):
         __slots__ = ()
         def __init__(self) -> None: ...
     class Response(_message.Message):
-        __slots__ = ("server_capabilities", "diagnostics", "data_sources", "resources", "functions")
+        __slots__ = ("server_capabilities", "diagnostics", "data_sources", "resources", "functions", "ephemeral_resources")
         SERVER_CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
         DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
         DATA_SOURCES_FIELD_NUMBER: _ClassVar[int]
         RESOURCES_FIELD_NUMBER: _ClassVar[int]
         FUNCTIONS_FIELD_NUMBER: _ClassVar[int]
+        EPHEMERAL_RESOURCES_FIELD_NUMBER: _ClassVar[int]
         server_capabilities: ServerCapabilities
         diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
         data_sources: _containers.RepeatedCompositeFieldContainer[GetMetadata.DataSourceMetadata]
         resources: _containers.RepeatedCompositeFieldContainer[GetMetadata.ResourceMetadata]
         functions: _containers.RepeatedCompositeFieldContainer[GetMetadata.FunctionMetadata]
-        def __init__(self, server_capabilities: _Optional[_Union[ServerCapabilities, _Mapping]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., data_sources: _Optional[_Iterable[_Union[GetMetadata.DataSourceMetadata, _Mapping]]] = ..., resources: _Optional[_Iterable[_Union[GetMetadata.ResourceMetadata, _Mapping]]] = ..., functions: _Optional[_Iterable[_Union[GetMetadata.FunctionMetadata, _Mapping]]] = ...) -> None: ...
+        ephemeral_resources: _containers.RepeatedCompositeFieldContainer[GetMetadata.EphemeralResourceMetadata]
+        def __init__(self, server_capabilities: _Optional[_Union[ServerCapabilities, _Mapping]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., data_sources: _Optional[_Iterable[_Union[GetMetadata.DataSourceMetadata, _Mapping]]] = ..., resources: _Optional[_Iterable[_Union[GetMetadata.ResourceMetadata, _Mapping]]] = ..., functions: _Optional[_Iterable[_Union[GetMetadata.FunctionMetadata, _Mapping]]] = ..., ephemeral_resources: _Optional[_Iterable[_Union[GetMetadata.EphemeralResourceMetadata, _Mapping]]] = ...) -> None: ...
     class FunctionMetadata(_message.Message):
         __slots__ = ("name",)
         NAME_FIELD_NUMBER: _ClassVar[int]
@@ -267,6 +326,11 @@ class GetMetadata(_message.Message):
         TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
         type_name: str
         def __init__(self, type_name: _Optional[str] = ...) -> None: ...
+    class EphemeralResourceMetadata(_message.Message):
+        __slots__ = ("type_name",)
+        TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
+        type_name: str
+        def __init__(self, type_name: _Optional[str] = ...) -> None: ...
     def __init__(self) -> None: ...
 
 class GetProviderSchema(_message.Message):
@@ -275,7 +339,7 @@ class GetProviderSchema(_message.Message):
         __slots__ = ()
         def __init__(self) -> None: ...
     class Response(_message.Message):
-        __slots__ = ("provider", "resource_schemas", "data_source_schemas", "diagnostics", "provider_meta", "server_capabilities", "functions")
+        __slots__ = ("provider", "resource_schemas", "data_source_schemas", "diagnostics", "provider_meta", "server_capabilities", "functions", "ephemeral_resource_schemas")
         class ResourceSchemasEntry(_message.Message):
             __slots__ = ("key", "value")
             KEY_FIELD_NUMBER: _ClassVar[int]
@@ -297,6 +361,13 @@ class GetProviderSchema(_message.Message):
             key: str
             value: Function
             def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[Function, _Mapping]] = ...) -> None: ...
+        class EphemeralResourceSchemasEntry(_message.Message):
+            __slots__ = ("key", "value")
+            KEY_FIELD_NUMBER: _ClassVar[int]
+            VALUE_FIELD_NUMBER: _ClassVar[int]
+            key: str
+            value: Schema
+            def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[Schema, _Mapping]] = ...) -> None: ...
         PROVIDER_FIELD_NUMBER: _ClassVar[int]
         RESOURCE_SCHEMAS_FIELD_NUMBER: _ClassVar[int]
         DATA_SOURCE_SCHEMAS_FIELD_NUMBER: _ClassVar[int]
@@ -304,6 +375,7 @@ class GetProviderSchema(_message.Message):
         PROVIDER_META_FIELD_NUMBER: _ClassVar[int]
         SERVER_CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
         FUNCTIONS_FIELD_NUMBER: _ClassVar[int]
+        EPHEMERAL_RESOURCE_SCHEMAS_FIELD_NUMBER: _ClassVar[int]
         provider: Schema
         resource_schemas: _containers.MessageMap[str, Schema]
         data_source_schemas: _containers.MessageMap[str, Schema]
@@ -311,7 +383,8 @@ class GetProviderSchema(_message.Message):
         provider_meta: Schema
         server_capabilities: ServerCapabilities
         functions: _containers.MessageMap[str, Function]
-        def __init__(self, provider: _Optional[_Union[Schema, _Mapping]] = ..., resource_schemas: _Optional[_Mapping[str, Schema]] = ..., data_source_schemas: _Optional[_Mapping[str, Schema]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., provider_meta: _Optional[_Union[Schema, _Mapping]] = ..., server_capabilities: _Optional[_Union[ServerCapabilities, _Mapping]] = ..., functions: _Optional[_Mapping[str, Function]] = ...) -> None: ...
+        ephemeral_resource_schemas: _containers.MessageMap[str, Schema]
+        def __init__(self, provider: _Optional[_Union[Schema, _Mapping]] = ..., resource_schemas: _Optional[_Mapping[str, Schema]] = ..., data_source_schemas: _Optional[_Mapping[str, Schema]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., provider_meta: _Optional[_Union[Schema, _Mapping]] = ..., server_capabilities: _Optional[_Union[ServerCapabilities, _Mapping]] = ..., functions: _Optional[_Mapping[str, Function]] = ..., ephemeral_resource_schemas: _Optional[_Mapping[str, Schema]] = ...) -> None: ...
     def __init__(self) -> None: ...
 
 class ValidateProviderConfig(_message.Message):
@@ -351,12 +424,14 @@ class UpgradeResourceState(_message.Message):
 class ValidateResourceConfig(_message.Message):
     __slots__ = ()
     class Request(_message.Message):
-        __slots__ = ("type_name", "config")
+        __slots__ = ("type_name", "config", "client_capabilities")
         TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
         CONFIG_FIELD_NUMBER: _ClassVar[int]
+        CLIENT_CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
         type_name: str
         config: DynamicValue
-        def __init__(self, type_name: _Optional[str] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+        client_capabilities: ClientCapabilities
+        def __init__(self, type_name: _Optional[str] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ..., client_capabilities: _Optional[_Union[ClientCapabilities, _Mapping]] = ...) -> None: ...
     class Response(_message.Message):
         __slots__ = ("diagnostics",)
         DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
@@ -383,12 +458,14 @@ class ValidateDataResourceConfig(_message.Message):
 class ConfigureProvider(_message.Message):
     __slots__ = ()
     class Request(_message.Message):
-        __slots__ = ("terraform_version", "config")
+        __slots__ = ("terraform_version", "config", "client_capabilities")
         TERRAFORM_VERSION_FIELD_NUMBER: _ClassVar[int]
         CONFIG_FIELD_NUMBER: _ClassVar[int]
+        CLIENT_CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
         terraform_version: str
         config: DynamicValue
-        def __init__(self, terraform_version: _Optional[str] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+        client_capabilities: ClientCapabilities
+        def __init__(self, terraform_version: _Optional[str] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ..., client_capabilities: _Optional[_Union[ClientCapabilities, _Mapping]] = ...) -> None: ...
     class Response(_message.Message):
         __slots__ = ("diagnostics",)
         DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
@@ -399,162 +476,200 @@ class ConfigureProvider(_message.Message):
 class ReadResource(_message.Message):
     __slots__ = ()
     class Request(_message.Message):
-        __slots__ = ("type_name", "current_state", "private", "provider_meta")
+        __slots__ = ("type_name", "current_state", "private", "provider_meta", "client_capabilities", "current_identity")
         TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
         CURRENT_STATE_FIELD_NUMBER: _ClassVar[int]
         PRIVATE_FIELD_NUMBER: _ClassVar[int]
         PROVIDER_META_FIELD_NUMBER: _ClassVar[int]
+        CLIENT_CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
+        CURRENT_IDENTITY_FIELD_NUMBER: _ClassVar[int]
         type_name: str
         current_state: DynamicValue
         private: bytes
         provider_meta: DynamicValue
-        def __init__(self, type_name: _Optional[str] = ..., current_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., private: _Optional[bytes] = ..., provider_meta: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+        client_capabilities: ClientCapabilities
+        current_identity: ResourceIdentityData
+        def __init__(self, type_name: _Optional[str] = ..., current_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., private: _Optional[bytes] = ..., provider_meta: _Optional[_Union[DynamicValue, _Mapping]] = ..., client_capabilities: _Optional[_Union[ClientCapabilities, _Mapping]] = ..., current_identity: _Optional[_Union[ResourceIdentityData, _Mapping]] = ...) -> None: ...
     class Response(_message.Message):
-        __slots__ = ("new_state", "diagnostics", "private")
+        __slots__ = ("new_state", "diagnostics", "private", "deferred", "new_identity")
         NEW_STATE_FIELD_NUMBER: _ClassVar[int]
         DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
         PRIVATE_FIELD_NUMBER: _ClassVar[int]
+        DEFERRED_FIELD_NUMBER: _ClassVar[int]
+        NEW_IDENTITY_FIELD_NUMBER: _ClassVar[int]
         new_state: DynamicValue
         diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
         private: bytes
-        def __init__(self, new_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., private: _Optional[bytes] = ...) -> None: ...
+        deferred: Deferred
+        new_identity: ResourceIdentityData
+        def __init__(self, new_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., private: _Optional[bytes] = ..., deferred: _Optional[_Union[Deferred, _Mapping]] = ..., new_identity: _Optional[_Union[ResourceIdentityData, _Mapping]] = ...) -> None: ...
     def __init__(self) -> None: ...
 
 class PlanResourceChange(_message.Message):
     __slots__ = ()
     class Request(_message.Message):
-        __slots__ = ("type_name", "prior_state", "proposed_new_state", "config", "prior_private", "provider_meta")
+        __slots__ = ("type_name", "prior_state", "proposed_new_state", "config", "prior_private", "provider_meta", "client_capabilities", "prior_identity")
         TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
         PRIOR_STATE_FIELD_NUMBER: _ClassVar[int]
         PROPOSED_NEW_STATE_FIELD_NUMBER: _ClassVar[int]
         CONFIG_FIELD_NUMBER: _ClassVar[int]
         PRIOR_PRIVATE_FIELD_NUMBER: _ClassVar[int]
         PROVIDER_META_FIELD_NUMBER: _ClassVar[int]
+        CLIENT_CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
+        PRIOR_IDENTITY_FIELD_NUMBER: _ClassVar[int]
         type_name: str
         prior_state: DynamicValue
         proposed_new_state: DynamicValue
         config: DynamicValue
         prior_private: bytes
         provider_meta: DynamicValue
-        def __init__(self, type_name: _Optional[str] = ..., prior_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., proposed_new_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ..., prior_private: _Optional[bytes] = ..., provider_meta: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+        client_capabilities: ClientCapabilities
+        prior_identity: ResourceIdentityData
+        def __init__(self, type_name: _Optional[str] = ..., prior_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., proposed_new_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ..., prior_private: _Optional[bytes] = ..., provider_meta: _Optional[_Union[DynamicValue, _Mapping]] = ..., client_capabilities: _Optional[_Union[ClientCapabilities, _Mapping]] = ..., prior_identity: _Optional[_Union[ResourceIdentityData, _Mapping]] = ...) -> None: ...
     class Response(_message.Message):
-        __slots__ = ("planned_state", "requires_replace", "planned_private", "diagnostics", "legacy_type_system")
+        __slots__ = ("planned_state", "requires_replace", "planned_private", "diagnostics", "legacy_type_system", "deferred", "planned_identity")
         PLANNED_STATE_FIELD_NUMBER: _ClassVar[int]
         REQUIRES_REPLACE_FIELD_NUMBER: _ClassVar[int]
         PLANNED_PRIVATE_FIELD_NUMBER: _ClassVar[int]
         DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
         LEGACY_TYPE_SYSTEM_FIELD_NUMBER: _ClassVar[int]
+        DEFERRED_FIELD_NUMBER: _ClassVar[int]
+        PLANNED_IDENTITY_FIELD_NUMBER: _ClassVar[int]
         planned_state: DynamicValue
         requires_replace: _containers.RepeatedCompositeFieldContainer[AttributePath]
         planned_private: bytes
         diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
         legacy_type_system: bool
-        def __init__(self, planned_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., requires_replace: _Optional[_Iterable[_Union[AttributePath, _Mapping]]] = ..., planned_private: _Optional[bytes] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., legacy_type_system: bool = ...) -> None: ...
+        deferred: Deferred
+        planned_identity: ResourceIdentityData
+        def __init__(self, planned_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., requires_replace: _Optional[_Iterable[_Union[AttributePath, _Mapping]]] = ..., planned_private: _Optional[bytes] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., legacy_type_system: bool = ..., deferred: _Optional[_Union[Deferred, _Mapping]] = ..., planned_identity: _Optional[_Union[ResourceIdentityData, _Mapping]] = ...) -> None: ...
     def __init__(self) -> None: ...
 
 class ApplyResourceChange(_message.Message):
     __slots__ = ()
     class Request(_message.Message):
-        __slots__ = ("type_name", "prior_state", "planned_state", "config", "planned_private", "provider_meta")
+        __slots__ = ("type_name", "prior_state", "planned_state", "config", "planned_private", "provider_meta", "planned_identity")
         TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
         PRIOR_STATE_FIELD_NUMBER: _ClassVar[int]
         PLANNED_STATE_FIELD_NUMBER: _ClassVar[int]
         CONFIG_FIELD_NUMBER: _ClassVar[int]
         PLANNED_PRIVATE_FIELD_NUMBER: _ClassVar[int]
         PROVIDER_META_FIELD_NUMBER: _ClassVar[int]
+        PLANNED_IDENTITY_FIELD_NUMBER: _ClassVar[int]
         type_name: str
         prior_state: DynamicValue
         planned_state: DynamicValue
         config: DynamicValue
         planned_private: bytes
         provider_meta: DynamicValue
-        def __init__(self, type_name: _Optional[str] = ..., prior_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., planned_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ..., planned_private: _Optional[bytes] = ..., provider_meta: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+        planned_identity: ResourceIdentityData
+        def __init__(self, type_name: _Optional[str] = ..., prior_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., planned_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ..., planned_private: _Optional[bytes] = ..., provider_meta: _Optional[_Union[DynamicValue, _Mapping]] = ..., planned_identity: _Optional[_Union[ResourceIdentityData, _Mapping]] = ...) -> None: ...
     class Response(_message.Message):
-        __slots__ = ("new_state", "private", "diagnostics", "legacy_type_system")
+        __slots__ = ("new_state", "private", "diagnostics", "legacy_type_system", "new_identity")
         NEW_STATE_FIELD_NUMBER: _ClassVar[int]
         PRIVATE_FIELD_NUMBER: _ClassVar[int]
         DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
         LEGACY_TYPE_SYSTEM_FIELD_NUMBER: _ClassVar[int]
+        NEW_IDENTITY_FIELD_NUMBER: _ClassVar[int]
         new_state: DynamicValue
         private: bytes
         diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
         legacy_type_system: bool
-        def __init__(self, new_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., private: _Optional[bytes] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., legacy_type_system: bool = ...) -> None: ...
+        new_identity: ResourceIdentityData
+        def __init__(self, new_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., private: _Optional[bytes] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., legacy_type_system: bool = ..., new_identity: _Optional[_Union[ResourceIdentityData, _Mapping]] = ...) -> None: ...
     def __init__(self) -> None: ...
 
 class ImportResourceState(_message.Message):
     __slots__ = ()
     class Request(_message.Message):
-        __slots__ = ("type_name", "id")
+        __slots__ = ("type_name", "id", "client_capabilities", "identity")
         TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
         ID_FIELD_NUMBER: _ClassVar[int]
+        CLIENT_CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
+        IDENTITY_FIELD_NUMBER: _ClassVar[int]
         type_name: str
         id: str
-        def __init__(self, type_name: _Optional[str] = ..., id: _Optional[str] = ...) -> None: ...
+        client_capabilities: ClientCapabilities
+        identity: ResourceIdentityData
+        def __init__(self, type_name: _Optional[str] = ..., id: _Optional[str] = ..., client_capabilities: _Optional[_Union[ClientCapabilities, _Mapping]] = ..., identity: _Optional[_Union[ResourceIdentityData, _Mapping]] = ...) -> None: ...
     class ImportedResource(_message.Message):
-        __slots__ = ("type_name", "state", "private")
+        __slots__ = ("type_name", "state", "private", "identity")
         TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
         STATE_FIELD_NUMBER: _ClassVar[int]
         PRIVATE_FIELD_NUMBER: _ClassVar[int]
+        IDENTITY_FIELD_NUMBER: _ClassVar[int]
         type_name: str
         state: DynamicValue
         private: bytes
-        def __init__(self, type_name: _Optional[str] = ..., state: _Optional[_Union[DynamicValue, _Mapping]] = ..., private: _Optional[bytes] = ...) -> None: ...
+        identity: ResourceIdentityData
+        def __init__(self, type_name: _Optional[str] = ..., state: _Optional[_Union[DynamicValue, _Mapping]] = ..., private: _Optional[bytes] = ..., identity: _Optional[_Union[ResourceIdentityData, _Mapping]] = ...) -> None: ...
     class Response(_message.Message):
-        __slots__ = ("imported_resources", "diagnostics")
+        __slots__ = ("imported_resources", "diagnostics", "deferred")
         IMPORTED_RESOURCES_FIELD_NUMBER: _ClassVar[int]
         DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+        DEFERRED_FIELD_NUMBER: _ClassVar[int]
         imported_resources: _containers.RepeatedCompositeFieldContainer[ImportResourceState.ImportedResource]
         diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
-        def __init__(self, imported_resources: _Optional[_Iterable[_Union[ImportResourceState.ImportedResource, _Mapping]]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ...) -> None: ...
+        deferred: Deferred
+        def __init__(self, imported_resources: _Optional[_Iterable[_Union[ImportResourceState.ImportedResource, _Mapping]]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., deferred: _Optional[_Union[Deferred, _Mapping]] = ...) -> None: ...
     def __init__(self) -> None: ...
 
 class MoveResourceState(_message.Message):
     __slots__ = ()
     class Request(_message.Message):
-        __slots__ = ("source_provider_address", "source_type_name", "source_schema_version", "source_state", "target_type_name", "source_private")
+        __slots__ = ("source_provider_address", "source_type_name", "source_schema_version", "source_state", "target_type_name", "source_private", "source_identity", "source_identity_schema_version")
         SOURCE_PROVIDER_ADDRESS_FIELD_NUMBER: _ClassVar[int]
         SOURCE_TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
         SOURCE_SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
         SOURCE_STATE_FIELD_NUMBER: _ClassVar[int]
         TARGET_TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
         SOURCE_PRIVATE_FIELD_NUMBER: _ClassVar[int]
+        SOURCE_IDENTITY_FIELD_NUMBER: _ClassVar[int]
+        SOURCE_IDENTITY_SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
         source_provider_address: str
         source_type_name: str
         source_schema_version: int
         source_state: RawState
         target_type_name: str
         source_private: bytes
-        def __init__(self, source_provider_address: _Optional[str] = ..., source_type_name: _Optional[str] = ..., source_schema_version: _Optional[int] = ..., source_state: _Optional[_Union[RawState, _Mapping]] = ..., target_type_name: _Optional[str] = ..., source_private: _Optional[bytes] = ...) -> None: ...
+        source_identity: RawState
+        source_identity_schema_version: int
+        def __init__(self, source_provider_address: _Optional[str] = ..., source_type_name: _Optional[str] = ..., source_schema_version: _Optional[int] = ..., source_state: _Optional[_Union[RawState, _Mapping]] = ..., target_type_name: _Optional[str] = ..., source_private: _Optional[bytes] = ..., source_identity: _Optional[_Union[RawState, _Mapping]] = ..., source_identity_schema_version: _Optional[int] = ...) -> None: ...
     class Response(_message.Message):
-        __slots__ = ("target_state", "diagnostics", "target_private")
+        __slots__ = ("target_state", "diagnostics", "target_private", "target_identity")
         TARGET_STATE_FIELD_NUMBER: _ClassVar[int]
         DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
         TARGET_PRIVATE_FIELD_NUMBER: _ClassVar[int]
+        TARGET_IDENTITY_FIELD_NUMBER: _ClassVar[int]
         target_state: DynamicValue
         diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
         target_private: bytes
-        def __init__(self, target_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., target_private: _Optional[bytes] = ...) -> None: ...
+        target_identity: ResourceIdentityData
+        def __init__(self, target_state: _Optional[_Union[DynamicValue, _Mapping]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., target_private: _Optional[bytes] = ..., target_identity: _Optional[_Union[ResourceIdentityData, _Mapping]] = ...) -> None: ...
     def __init__(self) -> None: ...
 
 class ReadDataSource(_message.Message):
     __slots__ = ()
     class Request(_message.Message):
-        __slots__ = ("type_name", "config", "provider_meta")
+        __slots__ = ("type_name", "config", "provider_meta", "client_capabilities")
         TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
         CONFIG_FIELD_NUMBER: _ClassVar[int]
         PROVIDER_META_FIELD_NUMBER: _ClassVar[int]
+        CLIENT_CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
         type_name: str
         config: DynamicValue
         provider_meta: DynamicValue
-        def __init__(self, type_name: _Optional[str] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ..., provider_meta: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+        client_capabilities: ClientCapabilities
+        def __init__(self, type_name: _Optional[str] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ..., provider_meta: _Optional[_Union[DynamicValue, _Mapping]] = ..., client_capabilities: _Optional[_Union[ClientCapabilities, _Mapping]] = ...) -> None: ...
     class Response(_message.Message):
-        __slots__ = ("state", "diagnostics")
+        __slots__ = ("state", "diagnostics", "deferred")
         STATE_FIELD_NUMBER: _ClassVar[int]
         DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+        DEFERRED_FIELD_NUMBER: _ClassVar[int]
         state: DynamicValue
         diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
-        def __init__(self, state: _Optional[_Union[DynamicValue, _Mapping]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ...) -> None: ...
+        deferred: Deferred
+        def __init__(self, state: _Optional[_Union[DynamicValue, _Mapping]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., deferred: _Optional[_Union[Deferred, _Mapping]] = ...) -> None: ...
     def __init__(self) -> None: ...
 
 class GetFunctions(_message.Message):
@@ -594,4 +709,123 @@ class CallFunction(_message.Message):
         result: DynamicValue
         error: FunctionError
         def __init__(self, result: _Optional[_Union[DynamicValue, _Mapping]] = ..., error: _Optional[_Union[FunctionError, _Mapping]] = ...) -> None: ...
+    def __init__(self) -> None: ...
+
+class ValidateEphemeralResourceConfig(_message.Message):
+    __slots__ = ()
+    class Request(_message.Message):
+        __slots__ = ("type_name", "config")
+        TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
+        CONFIG_FIELD_NUMBER: _ClassVar[int]
+        type_name: str
+        config: DynamicValue
+        def __init__(self, type_name: _Optional[str] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ...) -> None: ...
+    class Response(_message.Message):
+        __slots__ = ("diagnostics",)
+        DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+        diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
+        def __init__(self, diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ...) -> None: ...
+    def __init__(self) -> None: ...
+
+class OpenEphemeralResource(_message.Message):
+    __slots__ = ()
+    class Request(_message.Message):
+        __slots__ = ("type_name", "config", "client_capabilities")
+        TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
+        CONFIG_FIELD_NUMBER: _ClassVar[int]
+        CLIENT_CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
+        type_name: str
+        config: DynamicValue
+        client_capabilities: ClientCapabilities
+        def __init__(self, type_name: _Optional[str] = ..., config: _Optional[_Union[DynamicValue, _Mapping]] = ..., client_capabilities: _Optional[_Union[ClientCapabilities, _Mapping]] = ...) -> None: ...
+    class Response(_message.Message):
+        __slots__ = ("diagnostics", "renew_at", "result", "private", "deferred")
+        DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+        RENEW_AT_FIELD_NUMBER: _ClassVar[int]
+        RESULT_FIELD_NUMBER: _ClassVar[int]
+        PRIVATE_FIELD_NUMBER: _ClassVar[int]
+        DEFERRED_FIELD_NUMBER: _ClassVar[int]
+        diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
+        renew_at: _timestamp_pb2.Timestamp
+        result: DynamicValue
+        private: bytes
+        deferred: Deferred
+        def __init__(self, diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., renew_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., result: _Optional[_Union[DynamicValue, _Mapping]] = ..., private: _Optional[bytes] = ..., deferred: _Optional[_Union[Deferred, _Mapping]] = ...) -> None: ...
+    def __init__(self) -> None: ...
+
+class RenewEphemeralResource(_message.Message):
+    __slots__ = ()
+    class Request(_message.Message):
+        __slots__ = ("type_name", "private")
+        TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
+        PRIVATE_FIELD_NUMBER: _ClassVar[int]
+        type_name: str
+        private: bytes
+        def __init__(self, type_name: _Optional[str] = ..., private: _Optional[bytes] = ...) -> None: ...
+    class Response(_message.Message):
+        __slots__ = ("diagnostics", "renew_at", "private")
+        DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+        RENEW_AT_FIELD_NUMBER: _ClassVar[int]
+        PRIVATE_FIELD_NUMBER: _ClassVar[int]
+        diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
+        renew_at: _timestamp_pb2.Timestamp
+        private: bytes
+        def __init__(self, diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ..., renew_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., private: _Optional[bytes] = ...) -> None: ...
+    def __init__(self) -> None: ...
+
+class CloseEphemeralResource(_message.Message):
+    __slots__ = ()
+    class Request(_message.Message):
+        __slots__ = ("type_name", "private")
+        TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
+        PRIVATE_FIELD_NUMBER: _ClassVar[int]
+        type_name: str
+        private: bytes
+        def __init__(self, type_name: _Optional[str] = ..., private: _Optional[bytes] = ...) -> None: ...
+    class Response(_message.Message):
+        __slots__ = ("diagnostics",)
+        DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+        diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
+        def __init__(self, diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ...) -> None: ...
+    def __init__(self) -> None: ...
+
+class GetResourceIdentitySchemas(_message.Message):
+    __slots__ = ()
+    class Request(_message.Message):
+        __slots__ = ()
+        def __init__(self) -> None: ...
+    class Response(_message.Message):
+        __slots__ = ("identity_schemas", "diagnostics")
+        class IdentitySchemasEntry(_message.Message):
+            __slots__ = ("key", "value")
+            KEY_FIELD_NUMBER: _ClassVar[int]
+            VALUE_FIELD_NUMBER: _ClassVar[int]
+            key: str
+            value: ResourceIdentitySchema
+            def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[ResourceIdentitySchema, _Mapping]] = ...) -> None: ...
+        IDENTITY_SCHEMAS_FIELD_NUMBER: _ClassVar[int]
+        DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+        identity_schemas: _containers.MessageMap[str, ResourceIdentitySchema]
+        diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
+        def __init__(self, identity_schemas: _Optional[_Mapping[str, ResourceIdentitySchema]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ...) -> None: ...
+    def __init__(self) -> None: ...
+
+class UpgradeResourceIdentity(_message.Message):
+    __slots__ = ()
+    class Request(_message.Message):
+        __slots__ = ("type_name", "version", "raw_identity")
+        TYPE_NAME_FIELD_NUMBER: _ClassVar[int]
+        VERSION_FIELD_NUMBER: _ClassVar[int]
+        RAW_IDENTITY_FIELD_NUMBER: _ClassVar[int]
+        type_name: str
+        version: int
+        raw_identity: RawState
+        def __init__(self, type_name: _Optional[str] = ..., version: _Optional[int] = ..., raw_identity: _Optional[_Union[RawState, _Mapping]] = ...) -> None: ...
+    class Response(_message.Message):
+        __slots__ = ("upgraded_identity", "diagnostics")
+        UPGRADED_IDENTITY_FIELD_NUMBER: _ClassVar[int]
+        DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
+        upgraded_identity: ResourceIdentityData
+        diagnostics: _containers.RepeatedCompositeFieldContainer[Diagnostic]
+        def __init__(self, upgraded_identity: _Optional[_Union[ResourceIdentityData, _Mapping]] = ..., diagnostics: _Optional[_Iterable[_Union[Diagnostic, _Mapping]]] = ...) -> None: ...
     def __init__(self) -> None: ...

@@ -52,6 +52,8 @@ class Attribute:
         read_only: Optional[bool] = False,  # TODO(Hunter): Actually enforce this in CREATE/UPDATE
         # If computed and not set by the caller, what should the default value be?
         default: Any = Unknown,
+        # write_only: value provided via config but omitted from state (secrets, keys)
+        write_only: Optional[bool] = False,
     ):
         self.name = name
         self.type = type
@@ -64,6 +66,7 @@ class Attribute:
         self.deprecated = deprecated
         self.requires_replace = requires_replace
         self.default = default
+        self.write_only = write_only
 
     def to_pb(self) -> pb.Schema.Attribute:
         can_be_null = dict(
@@ -73,6 +76,7 @@ class Attribute:
             computed=self.computed or None,
             sensitive=self.sensitive,
             deprecated=self.deprecated,
+            write_only=self.write_only or None,
         )
 
         return pb.Schema.Attribute(

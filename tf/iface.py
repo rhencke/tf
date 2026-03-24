@@ -182,6 +182,36 @@ class Resource(AbstractResource, Protocol):
         return old
 
 
+class EphemeralResource(Protocol):
+    """An ephemeral resource exists only during plan/apply — never persisted to state.
+
+    Right semantic for one-shot operations (commands, URI fetches, scripts) where
+    drift detection is meaningless.
+    """
+
+    @classmethod
+    @abstractmethod
+    def get_name(cls) -> str:
+        """Short name (without provider prefix). The provider prefix is added by the servicer."""
+
+    @classmethod
+    @abstractmethod
+    def get_schema(cls) -> Optional[Schema]:
+        """Schema for this ephemeral resource, or None."""
+
+    @abstractmethod
+    def validate(self, diags: Diagnostics, config: Config):
+        """Validate the resource configuration."""
+
+    @abstractmethod
+    def open(self, diags: Diagnostics, config: Config) -> State:
+        """Execute and return results. Called on OpenEphemeralResource."""
+
+    @abstractmethod
+    def close(self, diags: Diagnostics, private: bytes):
+        """Finalize. Called on CloseEphemeralResource."""
+
+
 def is_importable(klass: Type[Resource]) -> bool:
     """Has the resource implemented the import_ method"""
     return hasattr(klass, "import_") and klass.import_ is not Resource.import_
@@ -220,6 +250,10 @@ class Provider(Protocol):
         """Get all the function types that this provider supports"""
         return []
 
+    def get_ephemeral_resources(self) -> list[Type[EphemeralResource]]:
+        """Get all the ephemeral resource types that this provider supports"""
+        return []
+
     def new_resource(self, klass: Type[Resource]) -> Resource:
         return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__
 
@@ -227,4 +261,7 @@ class Provider(Protocol):
         return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__
 
     def new_function(self, klass: Type["Function"]) -> "Function":
+        return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__
+
+    def new_ephemeral_resource(self, klass: Type[EphemeralResource]) -> EphemeralResource:
         return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__
