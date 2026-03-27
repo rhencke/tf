@@ -171,24 +171,24 @@ class Map(TfType):
     Maps are collections of string-keyed, homogeneously-typed values.
     Maps to Python `dict`.
 
-    :param value_type: The type of the values in the map.
+    :param element_type: The type of the elements in the map.
     """
 
-    def __init__(self, value_type: TfType):
-        self.value_type = value_type
+    def __init__(self, element_type: TfType):
+        self.element_type = element_type
 
     def encode(self, value: Any) -> Any:
         if value in (None, Unknown):
             return value
-        return {k: self.value_type.encode(v) for k, v in value.items()}
+        return {k: self.element_type.encode(v) for k, v in value.items()}
 
     def decode(self, value: Any) -> Any:
         if value in (None, Unknown):
             return value
-        return {k: self.value_type.decode(v) for k, v in value.items()}
+        return {k: self.element_type.decode(v) for k, v in value.items()}
 
     def tf_type(self) -> bytes:
-        t = self.value_type.tf_type().decode()
+        t = self.element_type.tf_type().decode()
         return f'["map",{t}]'.encode()
 
 
