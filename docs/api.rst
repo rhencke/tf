@@ -140,6 +140,7 @@ A handful of types are provided for you:
 .. autoclass:: tf.types.Number
 .. autoclass:: tf.types.String
 .. autoclass:: tf.types.List
+.. autoclass:: tf.types.Map
 .. autoclass:: tf.types.Set
 
 Several utility types are also provided:

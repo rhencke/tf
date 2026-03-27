@@ -18,12 +18,14 @@ in the State dictionaries.
 
 This framework handles the conversion to and from TF types and semantic equivalents.
 
-| Python Type      | TF Type  | Framework Type    | Notes                                                     |
-|------------------|----------|-------------------|-----------------------------------------------------------|
-| `str`            | `string` | `String`          |                                                           |
-| `int`, `float`   | `number` | `Number`          |                                                           |
-| `bool`           | `bool`   | `Bool`            |                                                           |
-| `Dict[str, Any]` | `string` | `NormalizedJson`  | Key order and whitespace are ignored for diff comparison. |
+| Framework Type    | Python Type      | TF Type  | Notes                                                     |
+|-------------------|------------------|----------|-----------------------------------------------------------|
+| `String`          | `str`            | `string` |                                                           |
+| `Number`          | `int`, `float`   | `number` |                                                           |
+| `Bool`            | `bool`           | `bool`   |                                                           |
+| `NormalizedJson`  | `Dict[str, Any]` | `string` | Key order and whitespace are ignored for diff comparison. |
+| `List`            | `List[Any]`      | `list`   |                                                           |
+| `Map`             | `Dict[str, Any]` | `map`    |                                                           |
 
 For `NormalizedJson` in particular, the framework will pass in `dict` and expect `dict` back.
 
