@@ -101,7 +101,7 @@ class ProviderTest(TestCase):
                 if not expect_changes
                 else "will perform the following actions:"
             )
-            expect_in_output = (expect_in_output or []) + [phrase]
+            expect_in_output = list(expect_in_output or []) + [phrase]
 
         res = self._tf_run(["plan"], hcl=hcl, expect_error=expect_error, expect_in_output=expect_in_output)
         return res
