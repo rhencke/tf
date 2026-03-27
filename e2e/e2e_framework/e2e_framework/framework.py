@@ -88,8 +88,23 @@ class ProviderTest(TestCase):
 
         return res
 
-    def tf_plan(self, hcl: str, expect_error=False, expect_in_output: Optional[Sequence[str]] = None) -> Result:
-        return self._tf_run(["plan"], hcl=hcl, expect_error=expect_error, expect_in_output=expect_in_output)
+    def tf_plan(
+        self,
+        hcl: str,
+        expect_error=False,
+        expect_in_output: Optional[Sequence[str]] = None,
+        expect_changes: bool | None = None,
+    ) -> Result:
+        if expect_changes is not None:
+            phrase = (
+                "No changes. Your infrastructure matches the configuration."
+                if not expect_changes
+                else "will perform the following actions:"
+            )
+            expect_in_output = (expect_in_output or []) + [phrase]
+
+        res = self._tf_run(["plan"], hcl=hcl, expect_error=expect_error, expect_in_output=expect_in_output)
+        return res
 
     def tf_apply(self, hcl: str, expect_error=False, expect_in_output: Optional[Sequence[str]] = None) -> Result:
         return self._tf_run(

@@ -5,10 +5,14 @@ from tf import runner
 from tf import types as t
 from tf.iface import (
     Config,
+    CreateContext,
     DataSource,
+    DeleteContext,
+    ReadContext,
     ReadDataContext,
     Resource,
     State,
+    UpdateContext,
 )
 from tf.provider import Diagnostics, Provider
 from tf.schema import Attribute, Schema
@@ -48,6 +52,37 @@ class Divider(DataSource):
         pass
 
 
+class Constant(Resource):
+    @classmethod
+    def get_name(cls) -> str:
+        return "constant"
+
+    @classmethod
+    def get_schema(cls) -> Schema:
+        return Schema(
+            attributes=[
+                Attribute("name", t.String(), required=True),
+                Attribute("approx_value", t.Number(), required=True),
+                Attribute("tags", t.Map(t.String()), required=True),
+            ]
+        )
+
+    def create(self, ctx: CreateContext, planned: State) -> Optional[State]:
+        return planned
+
+    def read(self, ctx: ReadContext, current: State) -> Optional[State]:
+        return current
+
+    def update(self, ctx: UpdateContext, current: State, planned: State) -> Optional[State]:
+        return planned
+
+    def delete(self, ctx: DeleteContext, current: State):
+        return None
+
+    def __init__(self, provider: "MathProvider"):
+        pass
+
+
 class MathProvider(Provider):
     def get_model_prefix(self) -> str:
         return "math_"
@@ -68,7 +103,7 @@ class MathProvider(Provider):
         return [Divider]
 
     def get_resources(self) -> list[Type[Resource]]:
-        return []
+        return [Constant]
 
 
 def main():

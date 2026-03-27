@@ -107,3 +107,123 @@ class DataSourceTest(ProviderTest):
             expect_error=False,
         )
         self.assertIn("the_sum = 16", result.stdout)
+
+
+class MapTest(ProviderTest):
+    PROVIDER_NAME = "test.terraform.io/test/math"
+
+    def test_map_happy(self):
+        self.tf_apply(
+            """\
+            resource "math_constant" "pi" {
+                name         = "pi"
+                approx_value = 3.14159
+                tags = {
+                    category = "irrational"
+                    source   = "demo"
+                }
+            }
+
+            output "constant_name" {
+                value = math_constant.pi.name
+            }
+            """,
+            expect_error=False,
+        )
+
+        self.assertEqual(
+            {
+                "outputs": {
+                    "constant_name": {
+                        "sensitive": False,
+                        "value": "pi",
+                        "type": "string",
+                    }
+                },
+                "root_module": {
+                    "resources": [
+                        {
+                            "address": "math_constant.pi",
+                            "mode": "managed",
+                            "type": "math_constant",
+                            "name": "pi",
+                            "provider_name": "test.terraform.io/test/math",
+                            "schema_version": 0,
+                            "values": {
+                                "name": "pi",
+                                "approx_value": 3.14159,
+                                "tags": {
+                                    "category": "irrational",
+                                    "source": "demo",
+                                },
+                            },
+                            "sensitive_values": {"tags": {}},
+                        }
+                    ]
+                },
+            },
+            self.tf_state()["values"],
+        )
+
+    def test_map_key_order_irrelevant(self):
+        """Verify map key order does not affect plan diffs."""
+        self.tf_apply(
+            """\
+            resource "math_constant" "e" {
+                name         = "e"
+                approx_value = 2.71828
+                tags = {
+                    source   = "demo"
+                    category = "irrational"
+                }
+            }
+            """,
+            expect_error=False,
+        )
+        self.tf_plan(
+            """\
+            resource "math_constant" "e" {
+                name         = "e"
+                approx_value = 2.71828
+                tags = {
+                    category = "irrational"
+                    source   = "demo"
+                }
+            }
+            """,
+            expect_error=False,
+            expect_changes=False,
+        )
+
+    def test_real_map_change(self):
+        self.tf_apply(
+            """\
+            resource "math_constant" "phi" {
+                name         = "phi"
+                approx_value = 1.61803
+                tags = {
+                    category = "irrational"
+                    source   = "demo"
+                }
+            }
+            """,
+            expect_error=False,
+        )
+        self.tf_plan(
+            """\
+            resource "math_constant" "phi" {
+                name         = "phi"
+                approx_value = 1.61803
+                tags = {
+                    category = "irrational"
+                    source   = "updated_demo"
+                }
+            }
+            """,
+            expect_error=False,
+            expect_changes=True,
+            expect_in_output=[
+                '~ "source"',
+                '"demo" -> "updated_demo"',
+            ],
+        )
