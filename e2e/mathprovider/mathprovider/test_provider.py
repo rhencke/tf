@@ -1,8 +1,5 @@
 from e2e_framework import ProviderTest, requires_tf
 
-# Minimum OpenTofu version for proto 6.6–6.9 features (write_only, ephemeral, identity).
-_PROTO_69_MIN = (1, 11, 0)  # (major, minor, maint)
-
 
 class DataSourceTest(ProviderTest):
     def test_plan_happy(self):
@@ -283,9 +280,49 @@ class ClientCapabilitiesE2ETest(ProviderTest):
         self.assertEqual(result.returncode, 0)
 
 
-@requires_tf(1, 11)
-class EphemeralResourceTest(MathProviderTest):
-    """End-to-end tests for ephemeral resource support (proto 6.9).
+@requires_tf(1, 11, 0)
+class WriteOnlyTest(ProviderTest):
+    """End-to-end tests for write_only attribute support (proto 6.8).
+
+    write_only attributes are accepted in configuration but must not appear
+    in Terraform state after create or update.
+    """
+
+    def test_create_write_only_attribute_absent_from_state(self):
+        result = self.tf_apply(
+            """\
+            resource "math_secret" "example" {
+                api_key = "super-secret-key"
+            }
+            """,
+            expect_error=False,
+        )
+        self.assertIn("math_secret.example: Creation complete", result.stdout)
+        state = self.tf_state()
+        resource_values = state["values"]["root_module"]["resources"][0]["values"]
+        # write_only fields are stored as null in state — the secret value is never persisted.
+        # tofu show -json includes the key with a null value rather than omitting it entirely.
+        self.assertIsNone(resource_values.get("api_key"))
+        # computed public ID is present and reflects the key length
+        self.assertEqual(resource_values.get("key_id"), "kid-16")
+
+    def test_plan_write_only_attribute_not_shown_in_plan(self):
+        result = self.tf_plan(
+            """\
+            resource "math_secret" "example" {
+                api_key = "my-api-key"
+            }
+            """,
+            expect_error=False,
+        )
+        # The value of a write_only attribute is never shown in plan output
+        self.assertNotIn("super-secret-key", result.stdout)
+        self.assertNotIn("my-api-key", result.stdout)
+
+
+@requires_tf(1, 11, 0)
+class EphemeralResourceTest(ProviderTest):
+    """End-to-end tests for ephemeral resource support (proto 6.7).
 
     Ephemeral resources exist only during plan/apply and are never persisted
     to Terraform state.  The math provider exposes `math_scaled_secret` as a

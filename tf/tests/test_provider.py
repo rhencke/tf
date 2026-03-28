@@ -2289,3 +2289,679 @@ class UpgradeResourceStateTest(ProviderTestBase):
                 ],
             ),
         )
+
+
+# ---------------------------------------------------------------------------
+# write_only attribute enforcement (proto 6.9)
+# ---------------------------------------------------------------------------
+
+
+class WriteOnlyResource(p.Resource):
+    """Resource with a write_only secret and a computed public identifier."""
+
+    @classmethod
+    def get_name(cls) -> str:
+        return "secret"
+
+    @classmethod
+    def get_schema(cls) -> schema.Schema:
+        return schema.Schema(
+            attributes=[
+                schema.Attribute("api_key", types.String(), required=True, write_only=True),
+                schema.Attribute("key_id", types.String(), computed=True),
+            ]
+        )
+
+    def __init__(self, _):
+        pass
+
+    def create(self, ctx: CreateContext, planned: State) -> Optional[State]:
+        # Provider receives the write_only value from config (injected by the framework).
+        return {"api_key": planned.get("api_key"), "key_id": f"kid-{len(planned.get('api_key') or '')}"}
+
+    def read(self, ctx: ReadContext, current: State) -> Optional[State]:
+        return current
+
+    def update(self, ctx: UpdateContext, current: State, planned: State) -> Optional[State]:
+        return {"api_key": planned.get("api_key"), "key_id": f"kid-{len(planned.get('api_key') or '')}"}
+
+    def delete(self, ctx: DeleteContext, current: State):
+        pass
+
+
+class WriteOnlyProvider(p.Provider):
+    def full_name(self) -> str:
+        return "tf.example.com/example/writeonly"
+
+    def get_model_prefix(self) -> str:
+        return "test_"
+
+    def get_provider_schema(self, diags: Diagnostics) -> schema.Schema:
+        return schema.Schema(attributes=[])
+
+    def validate_config(self, diags: Diagnostics, config: Config):
+        pass
+
+    def configure_provider(self, diags: Diagnostics, config: Config):
+        pass
+
+    def get_data_sources(self) -> list[Type[p.DataSource]]:
+        return []
+
+    def get_resources(self) -> list[Type[p.Resource]]:
+        return [WriteOnlyResource]
+
+
+class WriteOnlyPlanTest(ProviderTestBase):
+    """write_only attributes must be null in the planned state returned by PlanResourceChange.
+
+    Terraform enforces this at the protocol level: if a provider returns a non-null value for
+    a write_only attribute in the planned state, the apply is rejected.  The framework must
+    null these out automatically so individual resources never need to think about it.
+    """
+
+    def test_write_only_attr_nulled_in_create_plan(self):
+        """Config supplies a write_only value; planned_state must have it as null."""
+        _, servicer, ctx = self.provider_servicer_context(WriteOnlyProvider)
+        resp = servicer.PlanResourceChange(
+            pb.PlanResourceChange.Request(
+                type_name="test_secret",
+                prior_state=to_dynamic_value(None),
+                proposed_new_state=to_dynamic_value({"api_key": "s3cr3t", "key_id": None}),
+                config=to_dynamic_value({"api_key": "s3cr3t", "key_id": None}),
+                prior_private=b"",
+                provider_meta={},
+                client_capabilities=pb.ClientCapabilities(write_only_attributes_allowed=True),
+            ),
+            ctx,
+        )
+
+        self.assert_no_diagnostic_errors(resp)
+        planned = read_dynamic_value(resp.planned_state)
+        # write_only field must be null in the plan — the secret is never stored
+        self.assertIsNone(planned["api_key"])
+        # computed field is Unknown (to be filled during apply)
+        self.assertEqual(planned["key_id"], types.Unknown)
+
+    def test_write_only_value_visible_to_plan_on_create(self):
+        """plan() on CREATE receives the write_only value before nulling — resource can use it."""
+        _, servicer, ctx = self.provider_servicer_context(WriteOnlyProvider)
+        seen: list = []
+
+        def capturing_plan(inst, plan_ctx, current, planned):
+            seen.append(planned.get("api_key"))
+            return planned
+
+        with mock.patch.object(WriteOnlyResource, "plan", capturing_plan):
+            servicer.PlanResourceChange(
+                pb.PlanResourceChange.Request(
+                    type_name="test_secret",
+                    prior_state=to_dynamic_value(None),
+                    proposed_new_state=to_dynamic_value({"api_key": "s3cr3t", "key_id": None}),
+                    config=to_dynamic_value({"api_key": "s3cr3t"}),
+                    client_capabilities=pb.ClientCapabilities(write_only_attributes_allowed=True),
+                ),
+                ctx,
+            )
+        self.assertEqual(seen, ["s3cr3t"])  # plan() receives the non-null write_only value
+
+    def test_write_only_attr_nulled_in_update_plan(self):
+        """write_only attr is nulled in UPDATE planned state too."""
+        _, servicer, ctx = self.provider_servicer_context(WriteOnlyProvider)
+        prior = to_dynamic_value({"api_key": None, "key_id": "kid-6"})
+        resp = servicer.PlanResourceChange(
+            pb.PlanResourceChange.Request(
+                type_name="test_secret",
+                prior_state=prior,
+                proposed_new_state=to_dynamic_value({"api_key": "newkey", "key_id": "kid-6"}),
+                config=to_dynamic_value({"api_key": "newkey", "key_id": "kid-6"}),
+                prior_private=b"",
+                provider_meta={},
+                client_capabilities=pb.ClientCapabilities(write_only_attributes_allowed=True),
+            ),
+            ctx,
+        )
+
+        self.assert_no_diagnostic_errors(resp)
+        planned = read_dynamic_value(resp.planned_state)
+        self.assertIsNone(planned["api_key"])
+
+    def test_update_plan_with_none_proposed_state_skips_write_only_nulling(self):
+        """When inst.plan() returns None, _null_write_only_attrs handles it gracefully."""
+        _, servicer, ctx = self.provider_servicer_context(WriteOnlyProvider)
+
+        with mock.patch.object(WriteOnlyResource, "plan", return_value=None):
+            resp = servicer.PlanResourceChange(
+                pb.PlanResourceChange.Request(
+                    type_name="test_secret",
+                    prior_state=to_dynamic_value({"api_key": None, "key_id": "kid-6"}),
+                    proposed_new_state=to_dynamic_value({"api_key": "newkey", "key_id": "kid-6"}),
+                    config=to_dynamic_value({"api_key": "newkey", "key_id": "kid-6"}),
+                    prior_private=b"",
+                    provider_meta={},
+                    # write_only_attributes_allowed=True ensures _null_write_only_attrs is called
+                    # with state=None, exercising its early-return guard.
+                    client_capabilities=pb.ClientCapabilities(write_only_attributes_allowed=True),
+                ),
+                ctx,
+            )
+
+        # None proposed state encodes as null (destroy marker) — no crash
+        self.assertIsInstance(resp, pb.PlanResourceChange.Response)
+
+
+class WriteOnlyApplyTest(ProviderTestBase):
+    """write_only enforcement in ApplyResourceChange.
+
+    The framework must:
+    1. Inject the write_only value from request.config into planned_state before calling create/update,
+       so the resource implementation can use it (e.g. to compute a derived public key).
+    2. Strip the write_only value from the new state before returning it to Terraform.
+    """
+
+    def test_write_only_value_injected_from_config_on_create(self):
+        """Resource receives the write_only value from config, not the null planned_state."""
+        _, servicer, ctx = self.provider_servicer_context(WriteOnlyProvider)
+
+        received_planned: dict = {}
+
+        original_create = WriteOnlyResource.create
+
+        def capturing_create(self_res, ctx_inner, planned):
+            received_planned.update(planned)
+            return original_create(self_res, ctx_inner, planned)
+
+        with mock.patch.object(WriteOnlyResource, "create", capturing_create):
+            resp = servicer.ApplyResourceChange(
+                pb.ApplyResourceChange.Request(
+                    type_name="test_secret",
+                    prior_state=to_dynamic_value(None),
+                    # planned_state has write_only nulled (as PlanResourceChange returns)
+                    planned_state=to_dynamic_value({"api_key": None, "key_id": types.Unknown}),
+                    # config retains the actual value
+                    config=to_dynamic_value({"api_key": "s3cr3t", "key_id": None}),
+                    planned_private=b"",
+                    provider_meta={},
+                ),
+                ctx,
+            )
+
+        self.assert_no_diagnostic_errors(resp)
+        # The resource received the real value from config
+        self.assertEqual(received_planned["api_key"], "s3cr3t")
+
+    def test_write_only_stripped_vs_preserved_in_new_state(self):
+        """Framework strips write_only from state for new clients, preserves it for older ones.
+
+        New clients null the write_only value in planned_state; the framework detects this and
+        strips it from the returned state.  Older clients pass the real value through the plan
+        unchanged; the framework preserves it so old clients don't see perpetual plan diffs.
+        """
+        cases = [
+            # New client: planned_state has api_key=None (framework nulled it during plan)
+            ("stripped_for_new_client", {"api_key": None, "key_id": types.Unknown}, None),
+            # Old client: planned_state carries the real value (not nulled)
+            ("preserved_for_older_client", {"api_key": "s3cr3t", "key_id": types.Unknown}, "s3cr3t"),
+        ]
+        for desc, planned_state_vals, expected_api_key in cases:
+            with self.subTest(desc):
+                _, servicer, ctx = self.provider_servicer_context(WriteOnlyProvider)
+                resp = servicer.ApplyResourceChange(
+                    pb.ApplyResourceChange.Request(
+                        type_name="test_secret",
+                        prior_state=to_dynamic_value(None),
+                        planned_state=to_dynamic_value(planned_state_vals),
+                        config=to_dynamic_value({"api_key": "s3cr3t", "key_id": None}),
+                        planned_private=b"",
+                        provider_meta={},
+                    ),
+                    ctx,
+                )
+                self.assert_no_diagnostic_errors(resp)
+                new_state = read_dynamic_value(resp.new_state)
+                self.assertEqual(new_state["api_key"], expected_api_key)
+                self.assertEqual(new_state["key_id"], "kid-6")
+
+
+class WriteOnlyReadTest(ProviderTestBase):
+    """write_only attributes must be stripped from ReadResource responses.
+
+    A resource's read() implementation may return the write_only field (e.g. echoing
+    current state back).  The framework must null it before encoding the response when
+    the client signals write_only support, so secrets are never leaked into state.
+    """
+
+    def test_write_only_attr_in_read_response(self):
+        """write_only value is stripped for new clients and preserved for older clients."""
+        cases = [
+            ("stripped", pb.ClientCapabilities(write_only_attributes_allowed=True), None),
+            ("preserved_for_older_clients", pb.ClientCapabilities(), "s3cr3t"),
+        ]
+        for desc, caps, expected_api_key in cases:
+            with self.subTest(desc):
+                _, servicer, ctx = self.provider_servicer_context(WriteOnlyProvider)
+                resp = servicer.ReadResource(
+                    pb.ReadResource.Request(
+                        type_name="test_secret",
+                        current_state=to_dynamic_value({"api_key": "s3cr3t", "key_id": "kid-6"}),
+                        client_capabilities=caps,
+                    ),
+                    ctx,
+                )
+                self.assert_no_diagnostic_errors(resp)
+                new_state = read_dynamic_value(resp.new_state)
+                self.assertEqual(new_state["api_key"], expected_api_key)
+                self.assertEqual(new_state["key_id"], "kid-6")
+
+
+# ---------------------------------------------------------------------------
+# write_only in nested block attributes (lines 70-74 in _null_write_only_attrs)
+# ---------------------------------------------------------------------------
+
+
+class _WriteOnlyBlockResource(p.Resource):
+    """Resource with a write_only attribute inside a SetNestedBlock."""
+
+    @classmethod
+    def get_name(cls) -> str:
+        return "secret_block"
+
+    @classmethod
+    def get_schema(cls) -> schema.Schema:
+        return schema.Schema(
+            attributes=[schema.Attribute("name", types.String(), required=True)],
+            block_types=[
+                blocks.SetNestedBlock(
+                    "credentials",
+                    schema.Block(
+                        [
+                            schema.Attribute("token", types.String(), required=True, write_only=True),
+                            schema.Attribute("label", types.String(), optional=True),
+                        ]
+                    ),
+                ),
+            ],
+        )
+
+    def __init__(self, provider):
+        pass
+
+    def validate(self, diags: Diagnostics, type_name: str, config):
+        pass
+
+    def read(self, ctx: ReadContext, current: State) -> Optional[State]:
+        return current  # echoes back, including token
+
+    def create(self, ctx: CreateContext, planned: State) -> Optional[State]:
+        return planned
+
+    def update(self, ctx, current: State, planned: State) -> Optional[State]:
+        return planned
+
+    def delete(self, ctx, current: State):
+        pass
+
+
+class _WriteOnlyBlockProvider(WriteOnlyProvider):
+    def get_resources(self) -> list[Type]:
+        return super().get_resources() + [_WriteOnlyBlockResource]
+
+
+class WriteOnlyNestedBlockTest(ProviderTestBase):
+    """write_only attributes inside SetNestedBlock items must be stripped from responses."""
+
+    def test_write_only_in_nested_block_stripped_on_read(self):
+        """token is write_only inside a nested block; it must be null in the read response."""
+        _, servicer, ctx = self.provider_servicer_context(_WriteOnlyBlockProvider)
+        current = {
+            "name": "prod",
+            "credentials": [{"token": "s3cr3t", "label": "main"}],
+        }
+        resp = servicer.ReadResource(
+            pb.ReadResource.Request(
+                type_name="test_secret_block",
+                current_state=to_dynamic_value(current),
+                client_capabilities=pb.ClientCapabilities(write_only_attributes_allowed=True),
+            ),
+            ctx,
+        )
+        self.assert_no_diagnostic_errors(resp)
+        new_state = read_dynamic_value(resp.new_state)
+        self.assertIsNone(new_state["credentials"][0]["token"])
+        self.assertEqual(new_state["credentials"][0]["label"], "main")
+
+    def test_write_only_in_nested_block_not_stripped_for_older_clients(self):
+        """Without write_only_attributes_allowed, token must not be stripped."""
+        _, servicer, ctx = self.provider_servicer_context(_WriteOnlyBlockProvider)
+        current = {
+            "name": "prod",
+            "credentials": [{"token": "s3cr3t", "label": "main"}],
+        }
+        resp = servicer.ReadResource(
+            pb.ReadResource.Request(
+                type_name="test_secret_block",
+                current_state=to_dynamic_value(current),
+            ),
+            ctx,
+        )
+        self.assert_no_diagnostic_errors(resp)
+        new_state = read_dynamic_value(resp.new_state)
+        self.assertEqual(new_state["credentials"][0]["token"], "s3cr3t")
+
+    def test_write_only_in_nested_block_empty_list_is_safe(self):
+        """An empty nested block list must not cause errors."""
+        _, servicer, ctx = self.provider_servicer_context(_WriteOnlyBlockProvider)
+        current = {"name": "prod", "credentials": []}
+        resp = servicer.ReadResource(
+            pb.ReadResource.Request(
+                type_name="test_secret_block",
+                current_state=to_dynamic_value(current),
+                client_capabilities=pb.ClientCapabilities(write_only_attributes_allowed=True),
+            ),
+            ctx,
+        )
+        self.assert_no_diagnostic_errors(resp)
+        new_state = read_dynamic_value(resp.new_state)
+        self.assertEqual(new_state["credentials"], [])
+
+    def test_write_only_in_nested_block_absent_key_is_safe(self):
+        """When read() omits a block key entirely, _null_write_only_attrs skips it safely."""
+        _, servicer, ctx = self.provider_servicer_context(_WriteOnlyBlockProvider)
+        # read() returns a state without the credentials key at all
+        with mock.patch.object(_WriteOnlyBlockResource, "read", return_value={"name": "prod"}):
+            resp = servicer.ReadResource(
+                pb.ReadResource.Request(
+                    type_name="test_secret_block",
+                    current_state=to_dynamic_value({"name": "prod", "credentials": []}),
+                    client_capabilities=pb.ClientCapabilities(write_only_attributes_allowed=True),
+                ),
+                ctx,
+            )
+        self.assert_no_diagnostic_errors(resp)
+
+    def test_write_only_in_nested_block_none_item_skipped(self):
+        """A None entry inside a block list is skipped by _null_write_only_attrs safely."""
+        _, servicer, ctx = self.provider_servicer_context(_WriteOnlyBlockProvider)
+        # read() returns a list containing a None item
+        null_item_state = {"name": "prod", "credentials": [None]}
+        with mock.patch.object(_WriteOnlyBlockResource, "read", return_value=null_item_state):
+            resp = servicer.ReadResource(
+                pb.ReadResource.Request(
+                    type_name="test_secret_block",
+                    current_state=to_dynamic_value({"name": "prod", "credentials": []}),
+                    client_capabilities=pb.ClientCapabilities(write_only_attributes_allowed=True),
+                ),
+                ctx,
+            )
+        self.assert_no_diagnostic_errors(resp)
+
+    def test_write_only_in_nested_block_injected_on_apply(self):
+        """token inside a nested block is reinjected from config into planned_state on apply."""
+        _, servicer, ctx = self.provider_servicer_context(_WriteOnlyBlockProvider)
+        config = {"name": "prod", "credentials": [{"token": "s3cr3t", "label": "main"}]}
+        planned = {"name": "prod", "credentials": [{"token": None, "label": "main"}]}
+        resp = servicer.ApplyResourceChange(
+            pb.ApplyResourceChange.Request(
+                type_name="test_secret_block",
+                prior_state=to_dynamic_value(None),
+                planned_state=to_dynamic_value(planned),
+                config=to_dynamic_value(config),
+            ),
+            ctx,
+        )
+        self.assert_no_diagnostic_errors(resp)
+        new_state = read_dynamic_value(resp.new_state)
+        # token must be stripped from the returned state even though create() echoes it
+        self.assertIsNone(new_state["credentials"][0]["token"])
+        self.assertEqual(new_state["credentials"][0]["label"], "main")
+
+    def test_write_only_in_nested_block_not_injected_for_older_clients(self):
+        """When planned_state already has token (old client), it is preserved through apply."""
+        _, servicer, ctx = self.provider_servicer_context(_WriteOnlyBlockProvider)
+        state = {"name": "prod", "credentials": [{"token": "s3cr3t", "label": "main"}]}
+        resp = servicer.ApplyResourceChange(
+            pb.ApplyResourceChange.Request(
+                type_name="test_secret_block",
+                prior_state=to_dynamic_value(None),
+                planned_state=to_dynamic_value(state),
+                config=to_dynamic_value(state),
+            ),
+            ctx,
+        )
+        self.assert_no_diagnostic_errors(resp)
+        new_state = read_dynamic_value(resp.new_state)
+        # old client: write_only_supported is False, token must not be stripped
+        self.assertEqual(new_state["credentials"][0]["token"], "s3cr3t")
+
+    def test_write_only_in_nested_block_empty_list_skipped_on_apply(self):
+        """An empty credentials list triggers the early-continue path in _reinject_write_only_attrs."""
+        _, servicer, ctx = self.provider_servicer_context(_WriteOnlyBlockProvider)
+        planned = {"name": "prod", "credentials": []}
+        resp = servicer.ApplyResourceChange(
+            pb.ApplyResourceChange.Request(
+                type_name="test_secret_block",
+                prior_state=to_dynamic_value(None),
+                planned_state=to_dynamic_value(planned),
+                config=to_dynamic_value(planned),
+            ),
+            ctx,
+        )
+        self.assert_no_diagnostic_errors(resp)
+
+    def test_write_only_in_nested_block_none_item_skipped_on_reinject(self):
+        """_reinject_write_only_attrs skips None items inside block lists."""
+        blk = blocks.SetNestedBlock(
+            "credentials",
+            schema.Block([schema.Attribute("token", types.String(), required=True, write_only=True)]),
+        )
+        planned = {"credentials": [None]}
+        config = {"credentials": [{"token": "s3cr3t"}]}
+        result = p._reinject_write_only_attrs({}, {"credentials": blk}, planned, config)
+        self.assertFalse(result)  # None item skipped, no reinjection
+
+    def test_write_only_in_nested_block_none_config_item_skipped_on_reinject(self):
+        """_find_matching_config_item skips None entries in config_items."""
+        blk = blocks.SetNestedBlock(
+            "credentials",
+            schema.Block(
+                [
+                    schema.Attribute("token", types.String(), required=True, write_only=True),
+                    schema.Attribute("label", types.String(), required=True),
+                ]
+            ),
+        )
+        planned = {"credentials": [{"token": None, "label": "main"}]}
+        config = {"credentials": [None, {"token": "s3cr3t", "label": "main"}]}
+        result = p._reinject_write_only_attrs({}, {"credentials": blk}, planned, config)
+        self.assertTrue(result)
+        self.assertEqual(planned["credentials"][0]["token"], "s3cr3t")
+
+    def test_write_only_in_nested_block_no_matching_config_item(self):
+        """When no config item matches a planned item, no reinjection occurs."""
+        blk = blocks.SetNestedBlock(
+            "credentials",
+            schema.Block(
+                [
+                    schema.Attribute("token", types.String(), required=True, write_only=True),
+                    schema.Attribute("label", types.String(), required=True),
+                ]
+            ),
+        )
+        planned = {"credentials": [{"token": None, "label": "main"}]}
+        config = {"credentials": [{"token": "s3cr3t", "label": "other"}]}
+        result = p._reinject_write_only_attrs({}, {"credentials": blk}, planned, config)
+        self.assertFalse(result)
+
+    def test_write_only_in_nested_block_unknown_sentinel_skipped_on_reinject(self):
+        """Unknown sentinel for a block value is skipped without raising TypeError."""
+        blk = blocks.SetNestedBlock(
+            "credentials",
+            schema.Block([schema.Attribute("token", types.String(), required=True, write_only=True)]),
+        )
+        planned = {"credentials": Unknown}
+        config = {"credentials": [{"token": "s3cr3t"}]}
+        result = p._reinject_write_only_attrs({}, {"credentials": blk}, planned, config)
+        self.assertFalse(result)
+
+    def test_write_only_all_write_only_attrs_positional_no_cross_inject(self):
+        """When all block attrs are write_only, items are matched positionally (consume-once).
+
+        A vacuous all() would match every planned item to the first config item,
+        cross-injecting the same secret into every block entry.
+        """
+        blk = blocks.SetNestedBlock(
+            "tokens",
+            schema.Block([schema.Attribute("secret", types.String(), required=True, write_only=True)]),
+        )
+        planned = {"tokens": [{"secret": None}, {"secret": None}]}
+        config = {"tokens": [{"secret": "alpha"}, {"secret": "beta"}]}
+        result = p._reinject_write_only_attrs({}, {"tokens": blk}, planned, config)
+        self.assertTrue(result)
+        self.assertEqual(planned["tokens"][0]["secret"], "alpha")
+        self.assertEqual(planned["tokens"][1]["secret"], "beta")
+
+    def test_write_only_all_write_only_attrs_more_planned_than_config(self):
+        """When all attrs are write_only and config items are exhausted, extra planned items get no reinjection."""
+        blk = blocks.SetNestedBlock(
+            "tokens",
+            schema.Block([schema.Attribute("secret", types.String(), required=True, write_only=True)]),
+        )
+        planned = {"tokens": [{"secret": None}, {"secret": None}]}
+        config = {"tokens": [{"secret": "alpha"}]}
+        result = p._reinject_write_only_attrs({}, {"tokens": blk}, planned, config)
+        self.assertTrue(result)
+        self.assertEqual(planned["tokens"][0]["secret"], "alpha")
+        self.assertIsNone(planned["tokens"][1]["secret"])
+
+    def test_write_only_in_nested_block_reordered_items_matched(self):
+        """Items are matched by non-write_only fields so reordering does not cross-inject tokens."""
+        _, servicer, ctx = self.provider_servicer_context(_WriteOnlyBlockProvider)
+        # Config has two credentials; planned arrives with them swapped (set semantics)
+        config = {
+            "name": "prod",
+            "credentials": [
+                {"token": "secret-a", "label": "alpha"},
+                {"token": "secret-b", "label": "beta"},
+            ],
+        }
+        planned = {
+            "name": "prod",
+            "credentials": [
+                {"token": None, "label": "beta"},
+                {"token": None, "label": "alpha"},
+            ],
+        }
+        resp = servicer.ApplyResourceChange(
+            pb.ApplyResourceChange.Request(
+                type_name="test_secret_block",
+                prior_state=to_dynamic_value(None),
+                planned_state=to_dynamic_value(planned),
+                config=to_dynamic_value(config),
+            ),
+            ctx,
+        )
+        self.assert_no_diagnostic_errors(resp)
+        # Tokens must be stripped from the returned state (write_only)
+        new_state = read_dynamic_value(resp.new_state)
+        for item in new_state["credentials"]:
+            self.assertIsNone(item["token"])
+
+
+# ---------------------------------------------------------------------------
+# ApplyResourceChange config decode error (line 591)
+# ---------------------------------------------------------------------------
+
+
+class ApplyConfigDecodeErrorTest(ProviderTestBase):
+    """ApplyResourceChange must return an error diagnostic when request.config is undecodable."""
+
+    def test_config_decode_error_returns_diagnostic(self):
+        """An invalid JSON value in config triggers the config decode error path."""
+        _, servicer, ctx = self.provider_servicer_context()
+        resp = servicer.ApplyResourceChange(
+            pb.ApplyResourceChange.Request(
+                type_name="test_json",
+                prior_state=to_dynamic_value(None),
+                planned_state=to_dynamic_value({"json": None}),
+                # "not valid json" is not valid JSON; Json.decode will raise, adding a diagnostic
+                config=to_dynamic_value({"json": "not valid json"}),
+                planned_private=b"",
+                provider_meta={},
+            ),
+            ctx,
+        )
+        self.assertGreater(len(resp.diagnostics), 0)
+
+
+class WriteOnlySchemaValidationTest(ProviderTestBase):
+    """GetProviderSchema must reject write_only on provider, data-source, and ephemeral schemas."""
+
+    def _servicer_with_provider(self, provider):
+        servicer = p.ProviderServicer(provider)
+        ctx = ServicerContextMock()
+        return servicer, ctx
+
+    def test_write_only_in_provider_schema_is_an_error(self):
+        class BadProvider(ExampleProvider):
+            def get_provider_schema(self, diags):
+                return schema.Schema(
+                    attributes=[schema.Attribute("secret", types.String(), required=True, write_only=True)]
+                )
+
+        servicer, ctx = self._servicer_with_provider(BadProvider())
+        resp = servicer.GetProviderSchema(pb.GetProviderSchema.Request(), ctx)
+        errors = [d for d in resp.diagnostics if d.severity == pb.Diagnostic.ERROR]
+        self.assertGreater(len(errors), 0)
+        self.assertIn("provider", errors[0].summary)
+
+    def test_write_only_in_data_source_schema_is_an_error(self):
+        class WriteOnlyDataSource(DataSource):
+            @classmethod
+            def get_name(cls):
+                return "write_only_ds"
+
+            @classmethod
+            def get_schema(cls):
+                return schema.Schema(
+                    attributes=[schema.Attribute("secret", types.String(), required=True, write_only=True)]
+                )
+
+            def read(self, ctx, config):
+                return {}
+
+        class BadProvider(ExampleProvider):
+            def get_data_sources(self):
+                return [WriteOnlyDataSource]
+
+        servicer, ctx = self._servicer_with_provider(BadProvider())
+        resp = servicer.GetProviderSchema(pb.GetProviderSchema.Request(), ctx)
+        errors = [d for d in resp.diagnostics if d.severity == pb.Diagnostic.ERROR]
+        self.assertGreater(len(errors), 0)
+        self.assertIn("data source", errors[0].summary)
+
+    def test_write_only_in_nested_block_of_provider_schema_is_an_error(self):
+        class BadProvider(ExampleProvider):
+            def get_provider_schema(self, diags):
+                return schema.Schema(
+                    block_types=[
+                        schema.NestedBlock(
+                            "nested",
+                            schema.NestMode.Single,
+                            schema.Block(
+                                attributes=[schema.Attribute("secret", types.String(), required=True, write_only=True)]
+                            ),
+                        )
+                    ]
+                )
+
+        servicer, ctx = self._servicer_with_provider(BadProvider())
+        resp = servicer.GetProviderSchema(pb.GetProviderSchema.Request(), ctx)
+        errors = [d for d in resp.diagnostics if d.severity == pb.Diagnostic.ERROR]
+        self.assertGreater(len(errors), 0)
+        self.assertIn("provider", errors[0].summary)
+
+    def test_write_only_in_resource_schema_is_allowed(self):
+        servicer, ctx = self._servicer_with_provider(ExampleProvider())
+        resp = servicer.GetProviderSchema(pb.GetProviderSchema.Request(), ctx)
+        errors = [d for d in resp.diagnostics if d.severity == pb.Diagnostic.ERROR]
+        self.assertEqual(errors, [])

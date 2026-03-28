@@ -39,6 +39,109 @@ _DEFER_REASON_TO_PB = {
 }
 
 
+def _check_no_write_only(
+    attributes: list[Attribute], block_types: list[NestedBlock], context: str, diags: "Diagnostics"
+) -> None:
+    """Emit an error diagnostic for every write_only attribute found in *attributes* or nested blocks.
+
+    write_only is only valid for managed resource schemas; provider, data-source, and ephemeral
+    resource schemas must not use it.
+    """
+    for attr in attributes:
+        if attr.write_only:
+            diags.add_error(
+                f"Invalid write_only attribute in {context} schema",
+                f"Attribute '{attr.name}' has write_only=True, but write_only is only valid for managed resource schemas.",
+            )
+    for nb in block_types:
+        _check_no_write_only(nb.block.attributes, nb.block.block_types, f"{context}/{nb.type_name}", diags)
+
+
+def _null_write_only_attrs(attrs: dict[str, Attribute], blocks: dict[str, NestedBlock], state: Optional[dict]) -> None:
+    """Null out write_only attribute values in place, recursing into nested blocks.
+
+    Called after plan and read operations when the client supports write_only
+    (``caps.write_only_attributes_allowed`` is True) and after apply to strip
+    write_only values from returned state.  A None *state* is a no-op.
+    """
+    if state is None:
+        return
+    for k, attr in attrs.items():
+        if attr.write_only and k in state:
+            state[k] = None
+    for k, block in blocks.items():
+        block_val = state.get(k)
+        if not isinstance(block_val, list):
+            continue
+        for item in block_val:
+            if item is not None:
+                _null_write_only_attrs(block._amap(), block._bmap(), item)
+
+
+def _find_matching_config_item(attrs: dict[str, Attribute], planned_item: dict, config_items: list) -> Optional[dict]:
+    """Find the config item whose non-write_only fields all match planned_item.
+
+    Set-mode nested blocks have no guaranteed ordering — zip would pair the wrong
+    items when Terraform reorders them between config and plan.  We locate the
+    config entry by comparing the stable (non-secret) fields instead.
+
+    When all attributes are write_only there are no stable fields to match on.
+    A vacuous all() would match every config item against the first planned item,
+    potentially cross-injecting secrets.  In that case we fall back to a
+    positional, consume-once strategy: we return the first non-None config item
+    and mark it None so it cannot be matched again.
+    """
+    stable_keys = [k for k, a in attrs.items() if not a.write_only]
+    if not stable_keys:
+        for idx, config_item in enumerate(config_items):
+            if config_item is None:
+                continue
+            config_items[idx] = None
+            return config_item
+        return None
+    for config_item in config_items:
+        if config_item is None:
+            continue
+        if all(planned_item.get(k) == config_item.get(k) for k in stable_keys):
+            return config_item
+    return None
+
+
+def _reinject_write_only_attrs(
+    attrs: dict[str, Attribute],
+    blocks: dict[str, NestedBlock],
+    planned_state: dict,
+    config_state: dict,
+) -> bool:
+    """Copy write_only values from config_state into planned_state, recursing into nested blocks.
+
+    ApplyResourceChange carries no client_capabilities field.  The client signals
+    write_only support by nulling write_only values in the planned state while keeping
+    them non-null in config.  This function restores those values so the resource
+    implementation receives them during apply.
+
+    Returns True if any reinjection occurred (used to detect write_only support).
+    """
+    reinjected = False
+    for k, attr in attrs.items():
+        if attr.write_only and k in config_state and planned_state.get(k) is None and config_state.get(k) is not None:
+            planned_state[k] = config_state[k]
+            reinjected = True
+    for k, block in blocks.items():
+        planned_items = planned_state.get(k)
+        config_items = config_state.get(k)
+        if not isinstance(planned_items, list) or not isinstance(config_items, list):
+            continue
+        for planned_item in planned_items:
+            if planned_item is None:
+                continue
+            config_item = _find_matching_config_item(block._amap(), planned_item, config_items)
+            if config_item is not None:
+                if _reinject_write_only_attrs(block._amap(), block._bmap(), planned_item, config_item):
+                    reinjected = True
+    return reinjected
+
+
 def _deferred_pb(ctx) -> Optional[pb.Deferred]:
     """Return a pb.Deferred if the context signalled deferral, else None."""
     if ctx._deferred is None:
@@ -251,7 +354,9 @@ class ProviderServicer(rpc.ProviderServicer):
     @_log_errors
     def GetProviderSchema(self, request: pb.GetProviderSchema.Request, context: grpc.ServicerContext):
         diags = Diagnostics()
-        schema = self.app.get_provider_schema(diags).to_pb()
+        provider_schema_obj = self.app.get_provider_schema(diags)
+        _check_no_write_only(provider_schema_obj.attributes, provider_schema_obj.block_types, "provider", diags)
+        schema = provider_schema_obj.to_pb()
         self._load_ds_cls_map()
         self._load_res_cls_map()
         self._load_func_cls_map()
@@ -260,7 +365,11 @@ class ProviderServicer(rpc.ProviderServicer):
         ds_schemas = {}
         for type_name, klass in self._load_ds_cls_map().items():
             if type_name not in self._ds_schema_cache:
-                self._ds_schema_cache[type_name] = klass.get_schema().to_pb()
+                ds_schema_obj = klass.get_schema()
+                _check_no_write_only(
+                    ds_schema_obj.attributes, ds_schema_obj.block_types, f"data source '{type_name}'", diags
+                )
+                self._ds_schema_cache[type_name] = ds_schema_obj.to_pb()
             ds_schemas[type_name] = self._ds_schema_cache[type_name]
 
         res_schema = {}
@@ -276,6 +385,7 @@ class ProviderServicer(rpc.ProviderServicer):
             s = klass.get_schema()
             if s is not None:
                 if type_name not in self._eph_schema_cache:
+                    _check_no_write_only(s.attributes, s.block_types, f"ephemeral resource '{type_name}'", diags)
                     self._eph_schema_cache[type_name] = s.to_pb()
                 eph_schemas[type_name] = self._eph_schema_cache[type_name]
 
@@ -315,9 +425,9 @@ class ProviderServicer(rpc.ProviderServicer):
     @_log_errors
     def ValidateResourceConfig(self, request: pb.ValidateResourceConfig.Request, context: grpc.ServicerContext):
         # request.client_capabilities carries flags that Terraform sets to signal which
-        # proto 6.9 features it supports (deferral_allowed, write_only_attributes_allowed).
-        # Basic providers can ignore these; advanced providers may inspect them to opt in
-        # to write_only attribute enforcement or deferred planning.
+        # proto 6.8 features it supports (deferral_allowed since 6.6; write_only_attributes_allowed
+        # since 6.8).  Basic providers can ignore these; advanced providers may inspect them to opt
+        # in to write_only attribute enforcement or deferred planning.
         conf = read_dynamic_value(request.config)
         type_name = request.type_name
         klass = self._get_res_cls(type_name)
@@ -397,8 +507,12 @@ class ProviderServicer(rpc.ProviderServicer):
 
         klass = self._get_res_cls(type_name)
         inst = self.app.new_resource(klass)
-        ctx = ReadContext(diags, type_name, _extract_capabilities(request))
+        caps = _extract_capabilities(request)
+        ctx = ReadContext(diags, type_name, caps)
         new_state = inst.read(ctx, current_state)
+
+        if caps.write_only_attributes_allowed:
+            _null_write_only_attrs(attrs, blocks, new_state)
 
         return pb.ReadResource.Response(
             new_state=_encode_state(attrs, blocks, new_state, current_enc),
@@ -460,6 +574,13 @@ class ProviderServicer(rpc.ProviderServicer):
             if planned_state is not None:
                 new_state = planned_state
 
+            # write_only attributes must be null in planned state — but only when the client
+            # signals write_only support.  Older clients that don't set
+            # write_only_attributes_allowed treat write_only like a regular attribute and
+            # will reject a null planned value that doesn't match the config.
+            if caps.write_only_attributes_allowed:
+                _null_write_only_attrs(attrs, blocks, new_state)
+
             new_state_encoded = _encode_state(attrs, blocks, new_state, proposed_enc)
             return pb.PlanResourceChange.Response(
                 planned_state=new_state_encoded,
@@ -512,6 +633,9 @@ class ProviderServicer(rpc.ProviderServicer):
             proposed_copy or {},
         )
 
+        # write_only attributes must be null in planned state — but only when the client supports it.
+        if caps.write_only_attributes_allowed:
+            _null_write_only_attrs(attrs, blocks, proposed_new_state)
         return pb.PlanResourceChange.Response(
             planned_state=_encode_state(attrs, blocks, proposed_new_state, proposed_enc),
             requires_replace=requires_replace,
@@ -535,10 +659,23 @@ class ProviderServicer(rpc.ProviderServicer):
         if diags.has_errors():
             return pb.ApplyResourceChange.Response(diagnostics=diags.to_pb())
 
+        # ApplyResourceChange.Request carries no client_capabilities field; detect write_only
+        # support from the planned_state instead.  When the client understands write_only it
+        # nulls write_only values in the plan, so if a write_only attr is null in planned_state
+        # but non-null in config, the client has already performed write_only processing and we
+        # need to re-inject the real value so the resource implementation can use it.
+        _, config_state = _decode_state(diags, attrs, blocks, request.config)
+        if diags.has_errors():
+            return pb.ApplyResourceChange.Response(diagnostics=diags.to_pb())
+        write_only_supported = False
+        if config_state is not None and planned_state is not None:
+            write_only_supported = _reinject_write_only_attrs(attrs, blocks, planned_state, config_state)
         klass = self._get_res_cls(type_name)
         inst = self.app.new_resource(klass)
 
-        caps = _extract_capabilities(request)
+        # ApplyResourceChange.Request has no client_capabilities field; derive write_only support
+        # from the detection above.  deferral_allowed is always False — apply cannot be deferred.
+        caps = ClientCapabilities(write_only_attributes_allowed=write_only_supported)
         if prior_state is None and planned_state is not None:
             # Create
             apply_ctx = CreateContext(diags, type_name, caps)
@@ -553,6 +690,13 @@ class ProviderServicer(rpc.ProviderServicer):
             apply_ctx = UpdateContext(diags, type_name, caps)
             new_state = inst.update(apply_ctx, prior_state, planned_state)
 
+        # The SDK enforces write_only semantics when the client supports it: attributes declared
+        # write_only must never be stored in state.  Terraform rejects non-null write_only values,
+        # so we strip here at the framework layer.  Only strip when write_only_supported — older
+        # clients that don't understand write_only pass the real value through the plan unchanged,
+        # and those values must be preserved in state so they don't cause perpetual plan diffs.
+        if write_only_supported:
+            _null_write_only_attrs(attrs, blocks, new_state)
         # We use the planned field values if they are semantically equivalent to the new state.
         # For most fields on update and create, the TF client will have already done the hard work
         # of encoding the field values to provide the planned state.
