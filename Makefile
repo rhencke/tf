@@ -1,5 +1,5 @@
 HIDE := @
-TFPLUGIN_PROTO := tfplugin6.5.proto
+TFPLUGIN_PROTO := tfplugin6.9.proto
 POETRY := poetry
 MODULE := tf
 FORMATTABLE_SOURCES := $(MODULE) e2e docs/examples
