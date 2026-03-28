@@ -234,6 +234,42 @@ class Resource(AbstractResource, Protocol):
         return old
 
 
+class OpenContext(_Context): ...
+
+
+class EphemeralResource(Protocol):
+    """An ephemeral resource exists only during plan/apply — never persisted to state.
+
+    Right semantic for one-shot operations (commands, URI fetches, scripts) where
+    drift detection is meaningless.
+    """
+
+    @classmethod
+    @abstractmethod
+    def get_name(cls) -> str:
+        """Short name (without provider prefix). The provider prefix is added by the servicer."""
+
+    @classmethod
+    @abstractmethod
+    def get_schema(cls) -> Optional[Schema]:
+        """Schema for this ephemeral resource, or None."""
+
+    @abstractmethod
+    def validate(self, diags: Diagnostics, config: Config):
+        """Validate the resource configuration."""
+
+    @abstractmethod
+    def open(self, ctx: OpenContext, config: Config) -> State:
+        """Execute and return results. Called on OpenEphemeralResource.
+
+        :param ctx: Context carrying diagnostics, client capabilities, and defer support.
+        :param config: The decoded configuration dict.
+        """
+
+    def close(self, diags: Diagnostics, private: bytes) -> None:
+        """Finalize. Called on CloseEphemeralResource. Override to release resources."""
+
+
 def is_importable(klass: Type[Resource]) -> bool:
     """Has the resource implemented the import_ method"""
     return hasattr(klass, "import_") and klass.import_ is not Resource.import_
@@ -272,6 +308,10 @@ class Provider(Protocol):
         """Get all the function types that this provider supports"""
         return []
 
+    def get_ephemeral_resources(self) -> list[Type[EphemeralResource]]:
+        """Get all the ephemeral resource types that this provider supports"""
+        return []
+
     def new_resource(self, klass: Type[Resource]) -> Resource:
         return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__
 
@@ -279,4 +319,7 @@ class Provider(Protocol):
         return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__
 
     def new_function(self, klass: Type["Function"]) -> "Function":
+        return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__
+
+    def new_ephemeral_resource(self, klass: Type[EphemeralResource]) -> EphemeralResource:
         return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__

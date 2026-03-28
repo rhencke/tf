@@ -8,6 +8,8 @@ from tf.iface import (
     CreateContext,
     DataSource,
     DeleteContext,
+    EphemeralResource,
+    OpenContext,
     ReadContext,
     ReadDataContext,
     Resource,
@@ -83,6 +85,44 @@ class Constant(Resource):
         pass
 
 
+class ScaledSecret(EphemeralResource):
+    """Demonstrates the ephemeral resource lifecycle.
+
+    Multiplies `seed` by `multiplier` and returns the result as `value`.
+    The result exists only during plan/apply and is never written to state.
+    """
+
+    @classmethod
+    def get_name(cls) -> str:
+        return "scaled_secret"
+
+    @classmethod
+    def get_schema(cls) -> Optional[Schema]:
+        return Schema(
+            attributes=[
+                Attribute("seed", t.Number(), required=True),
+                Attribute("multiplier", t.Number(), optional=True),
+                Attribute("value", t.Number(), computed=True),
+            ]
+        )
+
+    def validate(self, diags: Diagnostics, config: Config):
+        if config.get("seed") is None:
+            diags.add_error("seed is required", "The 'seed' attribute must be set.")
+
+    def open(self, ctx: OpenContext, config: Config) -> State:
+        seed = config["seed"]
+        multiplier = config.get("multiplier") if config.get("multiplier") is not None else 1
+        return {
+            "seed": seed,
+            "multiplier": multiplier,
+            "value": seed * multiplier,
+        }
+
+    def __init__(self, provider: "MathProvider"):
+        pass
+
+
 class MathProvider(Provider):
     def get_model_prefix(self) -> str:
         return "math_"
@@ -104,6 +144,9 @@ class MathProvider(Provider):
 
     def get_resources(self) -> list[Type[Resource]]:
         return [Constant]
+
+    def get_ephemeral_resources(self) -> list[Type[EphemeralResource]]:
+        return [ScaledSecret]
 
 
 def main():

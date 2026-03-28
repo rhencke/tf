@@ -31,6 +31,7 @@ from tf.iface import (
     DeferReason,
     DeleteContext,
     ImportContext,
+    OpenContext,
     PlanContext,
     ReadContext,
     ReadDataContext,
@@ -275,6 +276,11 @@ class TestContextDefer(TestCase):
         ctx = CreateContext(Diagnostics(), "test_thing")
         ctx.defer()
         self.assertEqual(ctx._deferred, DeferReason.RESOURCE_CONFIG_UNKNOWN)
+
+    def test_open_context_defer(self):
+        ctx = OpenContext(Diagnostics(), "test_thing")
+        ctx.defer(DeferReason.PROVIDER_CONFIG_UNKNOWN)
+        self.assertEqual(ctx._deferred, DeferReason.PROVIDER_CONFIG_UNKNOWN)
 
     def test_plan_context_defer(self):
         ctx = PlanContext(Diagnostics(), "test_thing")

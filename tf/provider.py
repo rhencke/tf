@@ -15,7 +15,9 @@ from tf.iface import (
     DataSource,
     DeferReason,
     DeleteContext,
+    EphemeralResource,
     ImportContext,
+    OpenContext,
     PlanContext,
     Provider,
     ReadContext,
@@ -168,6 +170,7 @@ class ProviderServicer(rpc.ProviderServicer):
         self._ds_cls_map: Optional[dict[str, Type[DataSource]]] = None
         self._res_cls_map: Optional[dict[str, Type[Resource]]] = None
         self._func_cls_map: Optional[dict[str, Type[Function]]] = None
+        self._eph_cls_map: Optional[dict[str, Type[EphemeralResource]]] = None
 
         # Getting a resource's attributes in k-v form is very common, want to cache
         self._res_attr_map: dict[str, dict[str, Attribute]] = {}
@@ -177,23 +180,25 @@ class ProviderServicer(rpc.ProviderServicer):
         # Cache for schemas to avoid repeated computation
         self._ds_schema_cache: dict[str, Any] = {}
         self._res_schema_cache: dict[str, Any] = {}
+        self._eph_schema_cache: dict[str, Any] = {}
+
+    def _load_cls_map(self, cache_attr: str, getter, use_prefix: bool = True) -> dict:
+        """Generic lazy-initialised name→class map for any provider collection."""
+        cache = getattr(self, cache_attr)
+        if cache is None:
+            prefix = self.app.get_model_prefix() if use_prefix else ""
+            cache = {prefix + cls.get_name(): cls for cls in getter()}
+            setattr(self, cache_attr, cache)
+        return cache
 
     def _load_ds_cls_map(self) -> dict[str, Type[DataSource]]:
-        if self._ds_cls_map is None:
-            prefix = self.app.get_model_prefix()
-            self._ds_cls_map = {prefix + ds.get_name(): ds for ds in self.app.get_data_sources()}
-
-        return self._ds_cls_map
+        return self._load_cls_map("_ds_cls_map", self.app.get_data_sources)
 
     def _get_ds_cls(self, type_name: str) -> Type[DataSource]:
         return self._load_ds_cls_map()[type_name]
 
     def _load_res_cls_map(self) -> dict[str, Type[Resource]]:
-        if self._res_cls_map is None:
-            prefix = self.app.get_model_prefix()
-            self._res_cls_map = {prefix + res.get_name(): res for res in self.app.get_resources()}
-
-        return self._res_cls_map
+        return self._load_cls_map("_res_cls_map", self.app.get_resources)
 
     def _get_res_cls(self, type_name: str) -> Type[Resource]:
         return self._load_res_cls_map()[type_name]
@@ -213,13 +218,21 @@ class ProviderServicer(rpc.ProviderServicer):
         return self._res_block_map[type_name]
 
     def _load_func_cls_map(self) -> dict[str, Type[Function]]:
-        if self._func_cls_map is None:
-            self._func_cls_map = {func.get_name(): func for func in self.app.get_functions()}
-
-        return self._func_cls_map
+        return self._load_cls_map("_func_cls_map", self.app.get_functions, use_prefix=False)
 
     def _get_func_cls(self, name: str) -> Type[Function]:
         return self._load_func_cls_map()[name]
+
+    def _load_ephemeral_cls_map(self) -> dict[str, Type[EphemeralResource]]:
+        getter = getattr(self.app, "get_ephemeral_resources", lambda: [])
+        return self._load_cls_map("_eph_cls_map", getter)
+
+    def _get_ephemeral_cls(self, type_name: str, context: grpc.ServicerContext) -> Optional[Type[EphemeralResource]]:
+        klass = self._load_ephemeral_cls_map().get(type_name)
+        if klass is None:
+            context.set_code(grpc.StatusCode.NOT_FOUND)
+            context.set_details(f"Unknown ephemeral resource type: {type_name}")
+        return klass
 
     @_log_errors
     def GetMetadata(self, request: pb.GetMetadata.Request, context: grpc.ServicerContext):
@@ -258,6 +271,14 @@ class ProviderServicer(rpc.ProviderServicer):
 
         func_schemas = {name: klass.get_signature().to_pb() for name, klass in self._load_func_cls_map().items()}
 
+        eph_schemas = {}
+        for type_name, klass in self._load_ephemeral_cls_map().items():
+            s = klass.get_schema()
+            if s is not None:
+                if type_name not in self._eph_schema_cache:
+                    self._eph_schema_cache[type_name] = s.to_pb()
+                eph_schemas[type_name] = self._eph_schema_cache[type_name]
+
         # Create a proper provider_meta schema
         # This is an empty schema with an empty block - valid but with no attributes
         provider_meta = pb.Schema(
@@ -279,6 +300,7 @@ class ProviderServicer(rpc.ProviderServicer):
             data_source_schemas=ds_schemas,
             resource_schemas=res_schema,
             functions=func_schemas,
+            ephemeral_resource_schemas=eph_schemas,
         )
         return resp
 
@@ -657,7 +679,58 @@ class ProviderServicer(rpc.ProviderServicer):
         except Exception as e:
             return pb.CallFunction.Response(error=pb.FunctionError(text=f"Function execution error: {str(e)}"))
 
-    # ----------------- Resource identity (proto 6.9 stubs) ----------------- #
+    # ----------------- Ephemeral resource lifecycle (proto 6.7) ----------------- #
+
+    @_log_errors
+    def ValidateEphemeralResourceConfig(
+        self, request: pb.ValidateEphemeralResourceConfig.Request, context: grpc.ServicerContext
+    ):
+        klass = self._get_ephemeral_cls(request.type_name, context)
+        if klass is None:
+            return pb.ValidateEphemeralResourceConfig.Response()
+        config = read_dynamic_value(request.config)
+        diags = Diagnostics()
+        inst = self.app.new_ephemeral_resource(klass)
+        inst.validate(diags, config or {})
+        return pb.ValidateEphemeralResourceConfig.Response(diagnostics=diags.to_pb())
+
+    @_log_errors
+    def OpenEphemeralResource(self, request: pb.OpenEphemeralResource.Request, context: grpc.ServicerContext):
+        klass = self._get_ephemeral_cls(request.type_name, context)
+        if klass is None:
+            return pb.OpenEphemeralResource.Response()
+        config = read_dynamic_value(request.config)
+        diags = Diagnostics()
+        ctx = OpenContext(diags, request.type_name, _extract_capabilities(request))
+        inst = self.app.new_ephemeral_resource(klass)
+        result = inst.open(ctx, config or {})
+        dv = to_dynamic_value(result)
+        # TODO: extend EphemeralResource.open() to support returning renew_at and
+        # private bytes so providers can implement renewal and stateful cleanup.
+        return pb.OpenEphemeralResource.Response(
+            diagnostics=diags.to_pb(),
+            result=pb.DynamicValue(msgpack=dv.msgpack),
+            deferred=_deferred_pb(ctx),
+        )
+
+    @_log_errors
+    def RenewEphemeralResource(self, request: pb.RenewEphemeralResource.Request, context: grpc.ServicerContext):
+        # Renew is optional; providers that don't implement a renewal window return an empty response.
+        # TODO: extend EphemeralResource to support an optional renew() callback that can
+        # update renew_at and private, enabling providers to implement lease renewal.
+        return pb.RenewEphemeralResource.Response()
+
+    @_log_errors
+    def CloseEphemeralResource(self, request: pb.CloseEphemeralResource.Request, context: grpc.ServicerContext):
+        klass = self._get_ephemeral_cls(request.type_name, context)
+        if klass is None:
+            return pb.CloseEphemeralResource.Response()
+        diags = Diagnostics()
+        inst = self.app.new_ephemeral_resource(klass)
+        inst.close(diags, request.private)
+        return pb.CloseEphemeralResource.Response(diagnostics=diags.to_pb())
+
+    # ----------------- Resource identity (proto 6.9) ----------------- #
 
     @_log_errors
     def GetResourceIdentitySchemas(self, request: pb.GetResourceIdentitySchemas.Request, context: grpc.ServicerContext):

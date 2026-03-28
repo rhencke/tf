@@ -1,4 +1,4 @@
-from e2e_framework import ProviderTest
+from e2e_framework import ProviderTest, requires_tf
 
 # Minimum OpenTofu version for proto 6.6–6.9 features (write_only, ephemeral, identity).
 _PROTO_69_MIN = (1, 11, 0)  # (major, minor, maint)
@@ -281,3 +281,59 @@ class ClientCapabilitiesE2ETest(ProviderTest):
             expect_error=False,
         )
         self.assertEqual(result.returncode, 0)
+
+
+@requires_tf(1, 11)
+class EphemeralResourceTest(MathProviderTest):
+    """End-to-end tests for ephemeral resource support (proto 6.9).
+
+    Ephemeral resources exist only during plan/apply and are never persisted
+    to Terraform state.  The math provider exposes `math_scaled_secret` as a
+    demonstration: it multiplies a seed by a multiplier and returns the result.
+    """
+
+    def test_ephemeral_value_usable_as_write_only_input(self):
+        # The canonical use of an ephemeral resource is to feed its value into a
+        # write_only attribute of a managed resource — the value is consumed during
+        # apply and never stored in state.  This exercises the full Open→apply→Close
+        # lifecycle end-to-end.
+        result = self.tf_apply(
+            """\
+            ephemeral "math_scaled_secret" "token" {
+                seed       = 6
+                multiplier = 7
+            }
+
+            resource "math_secret" "example" {
+                api_key = tostring(ephemeral.math_scaled_secret.token.value)
+            }
+            """,
+            expect_error=False,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("math_secret.example: Creation complete", result.stdout)
+
+    def test_ephemeral_resource_schema_advertised(self):
+        # GetProviderSchema must include the ephemeral resource schema so that
+        # Terraform can type-check configuration before calling Open.
+        # A successful plan proves the schema was accepted.
+        result = self.tf_plan(
+            """\
+            ephemeral "math_scaled_secret" "token" {
+                seed = 3
+            }
+            """,
+            expect_error=False,
+        )
+        self.assertEqual(result.returncode, 0)
+
+    def test_ephemeral_validate_error_on_missing_seed(self):
+        # validate() adds an error when seed is not set.  Terraform surfaces
+        # this as a plan-time error before Open is called.
+        self.tf_plan(
+            """\
+            ephemeral "math_scaled_secret" "token" {
+            }
+            """,
+            expect_error=True,
+        )
