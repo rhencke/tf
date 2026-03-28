@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional, Protocol, Sequence, Type, TypeAlias
 
 from tf.schema import Attribute, NestedBlock, Schema
@@ -7,6 +7,25 @@ from tf.utils import Diagnostics
 
 if TYPE_CHECKING:  # pragma: no cover
     from tf.function import Function
+
+
+@dataclass
+class ClientCapabilities:
+    """Capabilities advertised by Terraform on each request (proto 6.6).
+
+    Providers that do not need to inspect these can ignore them — the defaults
+    (both False) are safe for all existing behaviour.
+
+    .. seealso::
+        Write-only arguments: https://developer.hashicorp.com/terraform/plugin/framework/resources/write-only-arguments
+        Deferred actions: https://developer.hashicorp.com/terraform/plugin/framework/actions
+    """
+
+    deferral_allowed: bool = False
+    """Terraform will retry a deferred plan in a subsequent planning cycle."""
+
+    write_only_attributes_allowed: bool = False
+    """Terraform supports the write_only attribute protocol extension."""
 
 
 State: TypeAlias = dict
@@ -42,6 +61,7 @@ class AbstractResource(Protocol):
 class _Context:
     diagnostics: Diagnostics
     type_name: str
+    client_capabilities: ClientCapabilities = field(default_factory=ClientCapabilities)
 
 
 class ReadDataContext(_Context): ...
@@ -117,7 +137,7 @@ class ImportContext(_Context): ...
 
 @dataclass
 class PlanContext(_Context):
-    changed_fields: set[str]
+    changed_fields: set[str] = field(default_factory=set)
 
 
 class Resource(AbstractResource, Protocol):

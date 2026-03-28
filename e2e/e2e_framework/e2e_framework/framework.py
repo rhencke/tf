@@ -1,4 +1,6 @@
+import functools
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -9,6 +11,62 @@ from typing import Optional, Sequence
 from unittest import TestCase
 
 
+def requires_tf(major: int, minor: int, patch: int):
+    """Decorator that skips a test class or individual test method if the active
+    OpenTofu binary is older than the specified minimum version.
+
+    Usage on a class (all tests in the class are skipped)::
+
+        @requires_tf(1, 11, 0)
+        class WriteOnlyTest(ProviderTest):
+            ...
+
+    Usage on a method (only that test is skipped)::
+
+        class EphemeralResourceTest(ProviderTest):
+            def test_basic(self):
+                ...
+
+            @requires_tf(1, 11, 0)
+            def test_needs_write_only_too(self):
+                ...
+    """
+
+    def _check(self):
+        tf_cmd = self._get_tf_command()
+        m = re.search(r"v?(\d+)\.(\d+)\.(\d+)", tf_cmd)
+        if m is None:
+            raise RuntimeError(f"Could not parse OpenTofu version from {tf_cmd!r}")
+        version = tuple(int(x) for x in m.groups())
+        if version < (major, minor, patch):
+            self.skipTest(f"requires OpenTofu >= {major}.{minor}.{patch}")
+
+    def decorator(obj):
+        if isinstance(obj, type):
+            # Class decorator — inject version check into setUp
+            original_setUp = obj.__dict__.get("setUp")
+
+            def setUp(self):
+                _check(self)
+                if original_setUp is not None:
+                    original_setUp(self)
+                else:
+                    super(obj, self).setUp()
+
+            obj.setUp = setUp
+            return obj
+        else:
+            # Method decorator — wrap the test function directly
+            @functools.wraps(obj)
+            def wrapper(self, *args, **kwargs):
+                _check(self)
+                return obj(self, *args, **kwargs)
+
+            return wrapper
+
+    return decorator
+
+
 @dataclass
 class Result:
     returncode: int
@@ -17,7 +75,7 @@ class Result:
 
 
 class ProviderTest(TestCase):
-    PROVIDER_NAME = ""
+    PROVIDER_NAME = "test.terraform.io/test/math"
 
     def setUp(self):
         super().setUp()

@@ -10,6 +10,7 @@ from tf.function import CallContext, Function
 from tf.gen import tfplugin_pb2 as pb
 from tf.gen import tfplugin_pb2_grpc as rpc
 from tf.iface import (
+    ClientCapabilities,
     CreateContext,
     DataSource,
     DeleteContext,
@@ -26,6 +27,17 @@ from tf.iface import (
 from tf.schema import Attribute, NestedBlock
 from tf.types import Unknown
 from tf.utils import Diagnostic, Diagnostics, _to_attribute_path, read_dynamic_value, to_dynamic_value
+
+
+def _extract_capabilities(request) -> ClientCapabilities:
+    """Extract ClientCapabilities from any proto request that carries the field."""
+    caps = getattr(request, "client_capabilities", None)
+    if caps is None:
+        return ClientCapabilities()
+    return ClientCapabilities(
+        deferral_allowed=caps.deferral_allowed,
+        write_only_attributes_allowed=caps.write_only_attributes_allowed,
+    )
 
 
 def _decode_state(
@@ -265,6 +277,10 @@ class ProviderServicer(rpc.ProviderServicer):
 
     @_log_errors
     def ValidateResourceConfig(self, request: pb.ValidateResourceConfig.Request, context: grpc.ServicerContext):
+        # request.client_capabilities carries flags that Terraform sets to signal which
+        # proto 6.9 features it supports (deferral_allowed, write_only_attributes_allowed).
+        # Basic providers can ignore these; advanced providers may inspect them to opt in
+        # to write_only attribute enforcement or deferred planning.
         conf = read_dynamic_value(request.config)
         type_name = request.type_name
         klass = self._get_res_cls(type_name)
@@ -315,6 +331,7 @@ class ProviderServicer(rpc.ProviderServicer):
     # ----------------- One-time init ----------------- #
     @_log_errors
     def ConfigureProvider(self, request: pb.ConfigureProvider.Request, context: grpc.ServicerContext):
+        # request.client_capabilities is available here as well (see ValidateResourceConfig).
         conf = read_dynamic_value(request.config)
         diags = Diagnostics()
         self.app.configure_provider(diags, conf)
@@ -343,13 +360,13 @@ class ProviderServicer(rpc.ProviderServicer):
 
         klass = self._get_res_cls(type_name)
         inst = self.app.new_resource(klass)
-        new_state = inst.read(ReadContext(diags, type_name), current_state)
+        ctx = ReadContext(diags, type_name, _extract_capabilities(request))
+        new_state = inst.read(ctx, current_state)
 
-        resp = pb.ReadResource.Response(
+        return pb.ReadResource.Response(
             new_state=_encode_state(attrs, blocks, new_state, current_enc),
             diagnostics=diags.to_pb(),
         )
-        return resp
 
     @_log_errors
     def PlanResourceChange(self, request: pb.PlanResourceChange.Request, context: grpc.ServicerContext):
@@ -371,6 +388,8 @@ class ProviderServicer(rpc.ProviderServicer):
 
         klass = self._get_res_cls(type_name)
         inst = self.app.new_resource(klass)
+
+        caps = _extract_capabilities(request)
 
         # We simplify the logic here. Instead of requiring each implementing resource to implement
         # plan_resource_change and apply_resource_change, we can figure
@@ -439,8 +458,9 @@ class ProviderServicer(rpc.ProviderServicer):
         prior_copy = deepcopy(prior_state) if prior_state is not None else None
         proposed_copy = deepcopy(proposed_new_state) if proposed_new_state is not None else None
 
+        plan_ctx = PlanContext(diags, type_name, caps, changed_fields=changed_keys)
         proposed_new_state = inst.plan(
-            PlanContext(diags, type_name, changed_fields=changed_keys),
+            plan_ctx,
             prior_copy,
             proposed_copy or {},
         )
@@ -470,16 +490,18 @@ class ProviderServicer(rpc.ProviderServicer):
         klass = self._get_res_cls(type_name)
         inst = self.app.new_resource(klass)
 
+        caps = _extract_capabilities(request)
         if prior_state is None and planned_state is not None:
             # Create
-            new_state = inst.create(CreateContext(diags, type_name), planned_state)
+            ctx = CreateContext(diags, type_name, caps)
+            new_state = inst.create(ctx, planned_state)
         elif prior_state is not None and planned_state is None:
             # Delete
-            new_state = inst.delete(DeleteContext(diags, type_name), prior_state)
+            new_state = inst.delete(DeleteContext(diags, type_name, caps), prior_state)
         else:
             prior_state = cast(dict, prior_state)
             planned_state = cast(dict, planned_state)
-            new_state = inst.update(UpdateContext(diags, type_name), prior_state, planned_state)
+            new_state = inst.update(UpdateContext(diags, type_name, caps), prior_state, planned_state)
 
         # We use the planned field values if they are semantically equivalent to the new state.
         # For most fields on update and create, the TF client will have already done the hard work
@@ -504,7 +526,7 @@ class ProviderServicer(rpc.ProviderServicer):
             )
             return pb.ImportResourceState.Response(diagnostics=diags.to_pb())
 
-        ctx = ImportContext(Diagnostics(), type_name)
+        ctx = ImportContext(Diagnostics(), type_name, _extract_capabilities(request))
         inst = self.app.new_resource(klass)
         state = inst.import_(ctx, request.id)
         attrs = self._get_res_attrs(type_name)
@@ -537,7 +559,8 @@ class ProviderServicer(rpc.ProviderServicer):
         inst = self.app.new_data_source(klass)
         diags = Diagnostics()
 
-        state = inst.read(ReadDataContext(diags, request.type_name), config)
+        ctx = ReadDataContext(diags, request.type_name, _extract_capabilities(request))
+        state = inst.read(ctx, config)
 
         return pb.ReadDataSource.Response(
             diagnostics=diags.to_pb(),
