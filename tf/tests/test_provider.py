@@ -2426,8 +2426,8 @@ class WriteOnlyPlanTest(ProviderTestBase):
         planned = read_dynamic_value(resp.planned_state)
         self.assertIsNone(planned["api_key"])
 
-    def test_update_plan_with_none_proposed_state_skips_write_only_nulling(self):
-        """When inst.plan() returns None, _null_write_only_attrs handles it gracefully."""
+    def test_update_plan_with_none_return_keeps_proposed_state(self):
+        """When inst.plan() returns None on UPDATE, the proposed_new_state is kept unchanged."""
         _, servicer, ctx = self.provider_servicer_context(WriteOnlyProvider)
 
         with mock.patch.object(WriteOnlyResource, "plan", return_value=None):
@@ -2439,15 +2439,17 @@ class WriteOnlyPlanTest(ProviderTestBase):
                     config=to_dynamic_value({"api_key": "newkey", "key_id": "kid-6"}),
                     prior_private=b"",
                     provider_meta={},
-                    # write_only_attributes_allowed=True ensures _null_write_only_attrs is called
-                    # with state=None, exercising its early-return guard.
                     client_capabilities=pb.ClientCapabilities(write_only_attributes_allowed=True),
                 ),
                 ctx,
             )
 
-        # None proposed state encodes as null (destroy marker) — no crash
-        self.assertIsInstance(resp, pb.PlanResourceChange.Response)
+        self.assert_no_diagnostic_errors(resp)
+        planned = read_dynamic_value(resp.planned_state)
+        # plan() returned None — framework keeps proposed_new_state as the plan.
+        # write_only attr is nulled because write_only_attributes_allowed=True.
+        self.assertIsNone(planned["api_key"])
+        self.assertEqual(planned["key_id"], "kid-6")
 
 
 class WriteOnlyApplyTest(ProviderTestBase):
@@ -2530,6 +2532,22 @@ class WriteOnlyReadTest(ProviderTestBase):
     current state back).  The framework must null it before encoding the response when
     the client signals write_only support, so secrets are never leaked into state.
     """
+
+    def test_write_only_null_state_from_read_is_noop(self):
+        """_null_write_only_attrs is a no-op when read() returns None."""
+        _, servicer, ctx = self.provider_servicer_context(WriteOnlyProvider)
+        with mock.patch.object(WriteOnlyResource, "read", return_value=None):
+            resp = servicer.ReadResource(
+                pb.ReadResource.Request(
+                    type_name="test_secret",
+                    current_state=to_dynamic_value({"api_key": "s3cr3t", "key_id": "kid-6"}),
+                    client_capabilities=pb.ClientCapabilities(write_only_attributes_allowed=True),
+                ),
+                ctx,
+            )
+        self.assert_no_diagnostic_errors(resp)
+        # read() returned None; new_state encodes as null — no crash from _null_write_only_attrs
+        self.assertIsNone(read_dynamic_value(resp.new_state))
 
     def test_write_only_attr_in_read_response(self):
         """write_only value is stripped for new clients and preserved for older clients."""

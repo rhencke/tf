@@ -1,4 +1,4 @@
-"""Tests for ephemeral resource support (proto 6.9)."""
+"""Tests for ephemeral resource support (proto 6.7)."""
 
 from typing import Optional
 from unittest import TestCase
@@ -69,6 +69,31 @@ class _EphemeralProvider(Provider):
         return [_PingEphemeral]
 
 
+class _MinimalProvider(Provider):
+    """Minimal provider with no ephemeral resources — uses the default empty list."""
+
+    def full_name(self):
+        return "x"
+
+    def get_model_prefix(self):
+        return "test_"
+
+    def get_provider_schema(self, d):
+        return Schema()
+
+    def validate_config(self, d, c):
+        pass
+
+    def configure_provider(self, d, c):
+        pass
+
+    def get_data_sources(self):
+        return []
+
+    def get_resources(self):
+        return []
+
+
 def _make_servicer(provider=None):
     return ProviderServicer(provider or _EphemeralProvider())
 
@@ -117,29 +142,7 @@ class TestEphemeralClsMap(TestCase):
         self.assertIs(cls_map["test_ping"], _PingEphemeral)
 
     def test_ephemeral_cls_map_empty_when_not_provided(self):
-        class _NoEphemeral(Provider):
-            def full_name(self):
-                return "x"
-
-            def get_model_prefix(self):
-                return "test_"
-
-            def get_provider_schema(self, d):
-                return Schema()
-
-            def validate_config(self, d, c):
-                pass
-
-            def configure_provider(self, d, c):
-                pass
-
-            def get_data_sources(self):
-                return []
-
-            def get_resources(self):
-                return []
-
-        svc = _make_servicer(_NoEphemeral())
+        svc = _make_servicer(_MinimalProvider())
         self.assertEqual(svc._load_ephemeral_cls_map(), {})
 
     def test_ephemeral_cls_map_empty_without_method(self):
@@ -168,29 +171,7 @@ class TestGetProviderSchemaEphemeral(TestCase):
         self.assertIn("test_ping", resp.ephemeral_resource_schemas)
 
     def test_no_ephemeral_resources_omits_field(self):
-        class _NoEphemeral(Provider):
-            def full_name(self):
-                return "x"
-
-            def get_model_prefix(self):
-                return "test_"
-
-            def get_provider_schema(self, d):
-                return Schema()
-
-            def validate_config(self, d, c):
-                pass
-
-            def configure_provider(self, d, c):
-                pass
-
-            def get_data_sources(self):
-                return []
-
-            def get_resources(self):
-                return []
-
-        svc = _make_servicer(_NoEphemeral())
+        svc = _make_servicer(_MinimalProvider())
         resp = svc.GetProviderSchema(pb.GetProviderSchema.Request(), MagicMock())
         self.assertEqual(len(resp.ephemeral_resource_schemas), 0)
 

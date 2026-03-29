@@ -23,13 +23,30 @@ from tf.iface import (
     ReadContext,
     ReadDataContext,
     Resource,
+    ResourceWithUpgradeIdentity,
     UpdateContext,
     UpgradeContext,
+    has_identity,
     is_importable,
 )
+
+# TODO(identity): Wire identity data through CRUD handlers (Read, Plan, Apply, Import)
+# once OpenTofu ships support for the resource identity RPCs.  As of OpenTofu 1.11,
+# GetResourceIdentitySchemas and UpgradeResourceIdentity satisfy the gRPC interface
+# but panic("unimplemented") — meaning the client never calls them and identity data
+# flowing through CRUD would be untestable.  The RPC stubs below are kept so the
+# proto surface is complete; the per-operation wiring is deferred until a real
+# integration test can validate the round-trip.  Terraform (HashiCorp) introduced
+# full support in v1.12.
 from tf.schema import Attribute, NestedBlock
 from tf.types import Unknown
-from tf.utils import Diagnostic, Diagnostics, _to_attribute_path, read_dynamic_value, to_dynamic_value
+from tf.utils import (
+    Diagnostic,
+    Diagnostics,
+    _to_attribute_path,
+    read_dynamic_value,
+    to_dynamic_value,
+)
 
 _DEFER_REASON_TO_PB = {
     DeferReason.UNKNOWN: pb.Deferred.UNKNOWN,
@@ -246,7 +263,10 @@ def _encode_state_d(
 
 
 def _encode_state(
-    attrs: dict[str, Attribute], blocks: dict[str, NestedBlock], state: Optional[dict], old: Optional[dict]
+    attrs: dict[str, Attribute],
+    blocks: dict[str, NestedBlock],
+    state: Optional[dict],
+    old: Optional[dict],
 ) -> pb.DynamicValue:
     """If any encoded values of state matches the old state, we will use the old state's encoded value"""
     # This preserves byte-for-byte equality for JSON
@@ -438,7 +458,11 @@ class ProviderServicer(rpc.ProviderServicer):
         return pb.ValidateResourceConfig.Response(diagnostics=diags.to_pb())
 
     @_log_errors
-    def ValidateDataResourceConfig(self, request: pb.ValidateDataResourceConfig.Request, context: grpc.ServicerContext):
+    def ValidateDataResourceConfig(
+        self,
+        request: pb.ValidateDataResourceConfig.Request,
+        context: grpc.ServicerContext,
+    ):
         conf = read_dynamic_value(request.config)
         klass = self._get_ds_cls(request.type_name)
         inst = self.app.new_data_source(klass)
@@ -627,11 +651,13 @@ class ProviderServicer(rpc.ProviderServicer):
         proposed_copy = deepcopy(proposed_new_state) if proposed_new_state is not None else None
 
         plan_ctx = PlanContext(diags, type_name, caps, changed_fields=changed_keys)
-        proposed_new_state = inst.plan(
+        planned = inst.plan(
             plan_ctx,
             prior_copy,
             proposed_copy or {},
         )
+        if planned is not None:
+            proposed_new_state = planned
 
         # write_only attributes must be null in planned state — but only when the client supports it.
         if caps.write_only_attributes_allowed:
@@ -743,7 +769,10 @@ class ProviderServicer(rpc.ProviderServicer):
 
     @_log_errors
     def MoveResourceState(self, request, context: grpc.ServicerContext):
-        diags = Diagnostics().add_error("MoveResourceState is not implemented", "MoveResourceState is not implemented")
+        diags = Diagnostics().add_error(
+            "MoveResourceState is not implemented",
+            "MoveResourceState is not implemented",
+        )
         return pb.MoveResourceState.Response(diagnostics=diags.to_pb())
 
     @_log_errors
@@ -795,7 +824,8 @@ class ProviderServicer(rpc.ProviderServicer):
             else:
                 return pb.CallFunction.Response(
                     error=pb.FunctionError(
-                        text=f"Too many arguments for function '{request.name}'", function_argument=i
+                        text=f"Too many arguments for function '{request.name}'",
+                        function_argument=i,
                     )
                 )
 
@@ -827,7 +857,9 @@ class ProviderServicer(rpc.ProviderServicer):
 
     @_log_errors
     def ValidateEphemeralResourceConfig(
-        self, request: pb.ValidateEphemeralResourceConfig.Request, context: grpc.ServicerContext
+        self,
+        request: pb.ValidateEphemeralResourceConfig.Request,
+        context: grpc.ServicerContext,
     ):
         klass = self._get_ephemeral_cls(request.type_name, context)
         if klass is None:
@@ -877,12 +909,74 @@ class ProviderServicer(rpc.ProviderServicer):
     # ----------------- Resource identity (proto 6.9) ----------------- #
 
     @_log_errors
-    def GetResourceIdentitySchemas(self, request: pb.GetResourceIdentitySchemas.Request, context: grpc.ServicerContext):
-        return pb.GetResourceIdentitySchemas.Response()
+    def GetResourceIdentitySchemas(
+        self,
+        request: pb.GetResourceIdentitySchemas.Request,
+        context: grpc.ServicerContext,
+    ):
+        """Return identity schemas for resource types that implement ResourceWithIdentity.
+
+        Resource types that do not implement the mixin are silently omitted —
+        Terraform treats their absence as "no identity support" for that type.
+        """
+        schemas = {}
+        for type_name, klass in self._load_res_cls_map().items():
+            if has_identity(klass):
+                schemas[type_name] = klass.get_identity_schema().to_pb()
+        diags = Diagnostics()
+        return pb.GetResourceIdentitySchemas.Response(
+            identity_schemas=schemas,
+            diagnostics=diags.to_pb(),
+        )
 
     @_log_errors
     def UpgradeResourceIdentity(self, request: pb.UpgradeResourceIdentity.Request, context: grpc.ServicerContext):
-        return pb.UpgradeResourceIdentity.Response()
+        """Upgrade identity data from an older schema version to the current one.
+
+        Called when Terraform has identity data encoded at an older
+        ``IdentitySchema.version`` than the provider currently advertises.
+        Resource types that implement :class:`ResourceWithUpgradeIdentity` handle
+        the migration; others return the raw identity unchanged (safe when the
+        shape has not changed, only the version number).
+        """
+        diags = Diagnostics()
+        try:
+            klass = self._get_res_cls(request.type_name)
+        except KeyError:
+            diags.add_error(
+                f"Unknown resource type: {request.type_name}",
+                f"UpgradeResourceIdentity called for unknown type '{request.type_name}'",
+            )
+            return pb.UpgradeResourceIdentity.Response(diagnostics=diags.to_pb())
+
+        raw = request.raw_identity
+        if raw.json:
+            import json as _json
+
+            try:
+                old_identity = _json.loads(raw.json)
+            except (_json.JSONDecodeError, UnicodeDecodeError) as exc:
+                diags.add_error(
+                    "Invalid identity JSON",
+                    f"Failed to decode raw identity for '{request.type_name}' " f"(version {request.version}): {exc}",
+                )
+                return pb.UpgradeResourceIdentity.Response(diagnostics=diags.to_pb())
+        else:
+            old_identity = {}
+
+        inst = self.app.new_resource(klass)
+        if isinstance(inst, ResourceWithUpgradeIdentity):
+            ctx = UpgradeContext(diags, request.type_name)
+            upgraded = inst.upgrade_identity(ctx, request.version, old_identity)
+        else:
+            upgraded = old_identity
+
+        if upgraded is not None:
+            return pb.UpgradeResourceIdentity.Response(
+                upgraded_identity=pb.ResourceIdentityData(identity_data=to_dynamic_value(upgraded)),
+                diagnostics=diags.to_pb(),
+            )
+        return pb.UpgradeResourceIdentity.Response(diagnostics=diags.to_pb())
 
     # ----------------- Graceful shutdown ----------------- #
     @_log_errors

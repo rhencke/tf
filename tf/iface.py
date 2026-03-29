@@ -1,9 +1,9 @@
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import TYPE_CHECKING, Optional, Protocol, Sequence, Type, TypeAlias
+from typing import TYPE_CHECKING, Optional, Protocol, Sequence, Type, TypeAlias, TypeGuard, runtime_checkable
 
-from tf.schema import Attribute, NestedBlock, Schema
+from tf.schema import Attribute, IdentitySchema, NestedBlock, Schema
 from tf.utils import Diagnostics
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -82,7 +82,24 @@ class _Context:
     diagnostics: Diagnostics
     type_name: str
     client_capabilities: ClientCapabilities = field(default_factory=ClientCapabilities)
+    current_identity: Optional[dict] = field(default=None)
     _deferred: Optional[DeferReason] = field(default=None, init=False, repr=False)
+    _identity_out: Optional[dict] = field(default=None, init=False, repr=False)
+
+    def set_identity(self, identity: dict) -> None:
+        """Set the resource identity to return to Terraform.
+
+        Call this from ``create``, ``update``, or ``read`` to provide the
+        stable identity of the resource.
+
+        .. note::
+            The API surface is defined but CRUD wiring is not yet active.
+            ``set_identity()`` stores the value on the context but the framework
+            does not yet attach it to RPC responses.  Full wiring is deferred
+            until OpenTofu ships support (panics on GetResourceIdentitySchemas
+            as of v1.11).  Terraform (HashiCorp) supports this from v1.12.
+        """
+        self._identity_out = identity
 
     def defer(self, reason: DeferReason = DeferReason.RESOURCE_CONFIG_UNKNOWN) -> None:
         """Signal that this operation cannot be completed yet.
@@ -273,6 +290,73 @@ class EphemeralResource(Protocol):
 def is_importable(klass: Type[Resource]) -> bool:
     """Has the resource implemented the import_ method"""
     return hasattr(klass, "import_") and klass.import_ is not Resource.import_
+
+
+@runtime_checkable
+class ResourceWithIdentity(Protocol):
+    """Mixin protocol for resources that expose a stable identity (proto 6.9).
+
+    Implement this alongside :class:`Resource` to opt into Terraform's identity
+    protocol.  The identity schema describes the minimal set of attributes that
+    uniquely identify the resource instance — used for import and cross-provider
+    move operations.
+
+    .. seealso:: https://developer.hashicorp.com/terraform/plugin/framework/resources/identity
+
+    In your ``create``, ``update``, and ``read`` implementations call
+    ``ctx.set_identity({"attr": value, ...})`` to record the identity on the
+    context.  As of now, this only stores the identity on the context; wiring
+    it into CRUD responses and the Terraform protocol encoding is deferred and
+    may be added in a future version.
+
+    Example::
+
+        class MyResource(Resource, ResourceWithIdentity):
+            @classmethod
+            def get_identity_schema(cls) -> IdentitySchema:
+                return IdentitySchema(
+                    attributes=[
+                        IdentityAttribute("id", types.String(), required_for_import=True),
+                    ]
+                )
+
+            def create(self, ctx: CreateContext, planned: State) -> Optional[State]:
+                result = _create_thing(planned)
+                ctx.set_identity({"id": result["id"]})
+                return result
+    """
+
+    @classmethod
+    @abstractmethod
+    def get_identity_schema(cls) -> IdentitySchema:
+        """Return the identity schema for this resource type."""
+
+
+@runtime_checkable
+class ResourceWithUpgradeIdentity(Protocol):
+    """Mixin for resources that can migrate old identity data to a new schema.
+
+    When :attr:`IdentitySchema.version` is incremented, Terraform may send
+    identity data encoded with an older schema version.  Implement this mixin
+    to convert old identity dicts to the current shape.
+
+    .. seealso:: https://developer.hashicorp.com/terraform/plugin/framework/resources/identity-upgrade
+    """
+
+    @abstractmethod
+    def upgrade_identity(self, ctx: UpgradeContext, version: int, old_identity: dict) -> Optional[dict]:
+        """Upgrade ``old_identity`` (encoded at ``version``) to the current schema.
+
+        :param ctx: Context carrying diagnostics.
+        :param version: The schema version the identity data was encoded with.
+        :param old_identity: The decoded identity dict from the older schema.
+        :returns: The identity dict in the current schema shape.
+        """
+
+
+def has_identity(klass: Type[Resource]) -> TypeGuard[Type[ResourceWithIdentity]]:
+    """Return True if *klass* implements :class:`ResourceWithIdentity`."""
+    return issubclass(klass, ResourceWithIdentity)
 
 
 class Provider(Protocol):

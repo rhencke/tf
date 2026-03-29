@@ -1,4 +1,4 @@
-"""Tests for proto 6.9 ClientCapabilities and Deferred (ctx.defer()) support.
+"""Tests for proto 6.6 ClientCapabilities and Deferred (ctx.defer()) support.
 
 ClientCapabilities is advertised by Terraform on each request to signal which
 optional protocol extensions it supports:

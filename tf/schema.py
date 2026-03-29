@@ -233,3 +233,80 @@ class NestedBlock:
 
     def _bmap(self) -> dict[str, "NestedBlock"]:
         return {b.type_name: b for b in self.block.block_types}
+
+
+class IdentityAttribute:
+    """A single attribute in a resource identity schema.
+
+    Identity attributes uniquely identify a resource instance for import and
+    cross-provider move operations.  Only primitive types (bool, number, string)
+    and lists of primitives are supported — no nested blocks, no maps.
+
+    Typically, exactly one of ``required_for_import`` or ``optional_for_import``
+    should be True.  ``required_for_import`` attributes must be supplied by the
+    user when running ``terraform import``; ``optional_for_import`` attributes
+    may be omitted and will be populated by the provider during import.
+    Setting both to False means the attribute does not participate in import;
+    setting both to True is not supported by Terraform and should be avoided.
+
+    .. seealso:: https://developer.hashicorp.com/terraform/plugin/framework/resources/identity
+    """
+
+    def __init__(
+        self,
+        name: str,
+        type: TfType,
+        required_for_import: bool = False,
+        optional_for_import: bool = False,
+        description: Optional[str] = None,
+    ):
+        if required_for_import and optional_for_import:
+            raise ValueError("IdentityAttribute: required_for_import and optional_for_import " "cannot both be True")
+        self.name = name
+        self.type = type
+        self.required_for_import = required_for_import
+        self.optional_for_import = optional_for_import
+        self.description = description
+
+    def to_pb(self) -> pb.ResourceIdentitySchema.IdentityAttribute:
+        kwargs: dict = dict(
+            name=self.name,
+            type=self.type.tf_type(),
+            required_for_import=self.required_for_import,
+            optional_for_import=self.optional_for_import,
+        )
+        if self.description is not None:
+            kwargs["description"] = self.description
+        return pb.ResourceIdentitySchema.IdentityAttribute(**kwargs)
+
+
+class IdentitySchema:
+    """Schema for a resource's stable identity (proto 6.9).
+
+    The identity schema describes the minimal set of attributes that uniquely
+    identifies a resource instance.  It is separate from the resource's main
+    schema and is used by Terraform for import and cross-provider move support.
+
+    :param attributes: List of :class:`IdentityAttribute` descriptors.
+    :param version: Schema version — increment when the identity shape changes
+        and implement ``ResourceWithUpgradeIdentity`` to migrate old identity
+        data to the new shape.
+
+    .. seealso::
+        Identity: https://developer.hashicorp.com/terraform/plugin/framework/resources/identity
+        Upgrade: https://developer.hashicorp.com/terraform/plugin/framework/resources/identity-upgrade
+    """
+
+    def __init__(
+        self,
+        attributes: Optional[list[IdentityAttribute]] = None,
+        version: int = 0,
+    ):
+        self.attributes = attributes or []
+        self.version = version
+
+    def to_pb(self) -> pb.ResourceIdentitySchema:
+        return pb.ResourceIdentitySchema(
+            version=self.version,
+            identity_attributes=[a.to_pb() for a in self.attributes],
+        )
