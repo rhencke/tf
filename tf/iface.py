@@ -1,5 +1,6 @@
 from abc import abstractmethod
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import TYPE_CHECKING, Optional, Protocol, Sequence, Type, TypeAlias
 
 from tf.schema import Attribute, NestedBlock, Schema
@@ -26,6 +27,25 @@ class ClientCapabilities:
 
     write_only_attributes_allowed: bool = False
     """Terraform supports the write_only attribute protocol extension."""
+
+
+class DeferReason(IntEnum):
+    """Reason a provider is deferring a resource operation (proto 6.6).
+
+    Pass one of these to ``ctx.defer()`` to signal that the current operation
+    cannot be completed yet.  Terraform will retry the plan in a subsequent
+    planning cycle when ``client_capabilities.deferral_allowed`` is True.
+
+    .. seealso:: https://developer.hashicorp.com/terraform/plugin/framework/actions/implementation
+    """
+
+    UNKNOWN = 0
+    RESOURCE_CONFIG_UNKNOWN = 1
+    """One or more resource config values are not yet known."""
+    PROVIDER_CONFIG_UNKNOWN = 2
+    """The provider configuration is not yet fully known."""
+    ABSENT_PREREQ = 3
+    """A prerequisite resource does not yet exist."""
 
 
 State: TypeAlias = dict
@@ -62,6 +82,18 @@ class _Context:
     diagnostics: Diagnostics
     type_name: str
     client_capabilities: ClientCapabilities = field(default_factory=ClientCapabilities)
+    _deferred: Optional[DeferReason] = field(default=None, init=False, repr=False)
+
+    def defer(self, reason: DeferReason = DeferReason.RESOURCE_CONFIG_UNKNOWN) -> None:
+        """Signal that this operation cannot be completed yet.
+
+        Terraform will retry the plan in a subsequent planning cycle.  Only
+        meaningful when ``self.client_capabilities.deferral_allowed`` is True;
+        calling ``defer()`` when deferral is not allowed will still set the
+        flag and the framework will encode it in the response, but Terraform
+        may treat it as an error.
+        """
+        self._deferred = reason
 
 
 class ReadDataContext(_Context): ...

@@ -350,6 +350,16 @@ class DefaultAttributeProvider(ExampleProvider):
         return [DefaultAttributeResource, OptionalAttributeWithoutDefaultResource]
 
 
+class EmptyPlanProvider(ExampleProvider):
+    def get_resources(self) -> list[Type[Resource]]:
+        return [EmptyPlanResource]
+
+
+class NonePlanProvider(ExampleProvider):
+    def get_resources(self) -> list[Type[Resource]]:
+        return [NonePlanResource]
+
+
 class DefaultAttributeResource(ExampleMathResource):
     @classmethod
     def get_name(cls) -> str:
@@ -386,6 +396,24 @@ class OptionalAttributeWithoutDefaultResource(ExampleMathResource):
                 schema.Attribute("product", types.Number(), computed=True),
             ],
         )
+
+
+class EmptyPlanResource(ExampleMathResource):
+    @classmethod
+    def get_name(cls) -> str:
+        return "empty_plan"
+
+    def plan(self, ctx, current, planned):
+        return {}
+
+
+class NonePlanResource(ExampleMathResource):
+    @classmethod
+    def get_name(cls) -> str:
+        return "none_plan"
+
+    def plan(self, ctx, current, planned):
+        return None
 
 
 class AbortError(Exception):
@@ -736,6 +764,51 @@ class PlanResourceChangeTest(ProviderTestBase):
             ),
         )
 
+        self.assertEqual(resp.requires_replace, [])
+        self.assertEqual(resp.planned_private, b"")
+        self.assertEqual(resp.legacy_type_system, False)
+
+    def test_create_uses_empty_plan_result(self):
+        provider, servicer, ctx = self.provider_servicer_context(EmptyPlanProvider)
+        resp = servicer.PlanResourceChange(
+            pb.PlanResourceChange.Request(
+                type_name="test_empty_plan",
+                prior_state=to_dynamic_value(None),
+                proposed_new_state=to_dynamic_value({"a": 1, "b": 2, "sum": None, "product": None}),
+                config=to_dynamic_value(None),
+                prior_private=b"",
+                provider_meta={},
+            ),
+            ctx,
+        )
+
+        self.assertIsInstance(resp, pb.PlanResourceChange.Response)
+        self.assert_no_diagnostic_errors(resp)
+        self.assertEqual(resp.planned_state, to_dynamic_value({}))
+        self.assertEqual(resp.requires_replace, [])
+        self.assertEqual(resp.planned_private, b"")
+        self.assertEqual(resp.legacy_type_system, False)
+
+    def test_create_keeps_default_plan_when_plan_returns_none(self):
+        provider, servicer, ctx = self.provider_servicer_context(NonePlanProvider)
+        resp = servicer.PlanResourceChange(
+            pb.PlanResourceChange.Request(
+                type_name="test_none_plan",
+                prior_state=to_dynamic_value(None),
+                proposed_new_state=to_dynamic_value({"a": 1, "b": 2, "sum": None, "product": None}),
+                config=to_dynamic_value(None),
+                prior_private=b"",
+                provider_meta={},
+            ),
+            ctx,
+        )
+
+        self.assertIsInstance(resp, pb.PlanResourceChange.Response)
+        self.assert_no_diagnostic_errors(resp)
+        self.assertEqual(
+            resp.planned_state,
+            to_dynamic_value({"a": 1, "b": 2, "sum": types.Unknown, "product": types.Unknown}),
+        )
         self.assertEqual(resp.requires_replace, [])
         self.assertEqual(resp.planned_private, b"")
         self.assertEqual(resp.legacy_type_system, False)

@@ -13,6 +13,7 @@ from tf.iface import (
     ClientCapabilities,
     CreateContext,
     DataSource,
+    DeferReason,
     DeleteContext,
     ImportContext,
     PlanContext,
@@ -27,6 +28,20 @@ from tf.iface import (
 from tf.schema import Attribute, NestedBlock
 from tf.types import Unknown
 from tf.utils import Diagnostic, Diagnostics, _to_attribute_path, read_dynamic_value, to_dynamic_value
+
+_DEFER_REASON_TO_PB = {
+    DeferReason.UNKNOWN: pb.Deferred.UNKNOWN,
+    DeferReason.RESOURCE_CONFIG_UNKNOWN: pb.Deferred.RESOURCE_CONFIG_UNKNOWN,
+    DeferReason.PROVIDER_CONFIG_UNKNOWN: pb.Deferred.PROVIDER_CONFIG_UNKNOWN,
+    DeferReason.ABSENT_PREREQ: pb.Deferred.ABSENT_PREREQ,
+}
+
+
+def _deferred_pb(ctx) -> Optional[pb.Deferred]:
+    """Return a pb.Deferred if the context signalled deferral, else None."""
+    if ctx._deferred is None:
+        return None
+    return pb.Deferred(reason=_DEFER_REASON_TO_PB[ctx._deferred])
 
 
 def _extract_capabilities(request) -> ClientCapabilities:
@@ -366,6 +381,7 @@ class ProviderServicer(rpc.ProviderServicer):
         return pb.ReadResource.Response(
             new_state=_encode_state(attrs, blocks, new_state, current_enc),
             diagnostics=diags.to_pb(),
+            deferred=_deferred_pb(ctx),
         )
 
     @_log_errors
@@ -417,8 +433,17 @@ class ProviderServicer(rpc.ProviderServicer):
                     else:
                         new_state[k] = attrs[k].default
 
+            plan_ctx = PlanContext(diags, type_name, caps)
+            planned_state = inst.plan(plan_ctx, None, deepcopy(new_state))
+            if planned_state is not None:
+                new_state = planned_state
+
             new_state_encoded = _encode_state(attrs, blocks, new_state, proposed_enc)
-            return pb.PlanResourceChange.Response(planned_state=new_state_encoded, diagnostics=diags.to_pb())
+            return pb.PlanResourceChange.Response(
+                planned_state=new_state_encoded,
+                diagnostics=diags.to_pb(),
+                deferred=_deferred_pb(plan_ctx),
+            )
 
         # Kind of interesting, TF does not send us DELETE (old_state = SOME and new_state = None)
         if proposed_new_state is None and prior_state is not None:
@@ -469,6 +494,7 @@ class ProviderServicer(rpc.ProviderServicer):
             planned_state=_encode_state(attrs, blocks, proposed_new_state, proposed_enc),
             requires_replace=requires_replace,
             diagnostics=diags.to_pb(),
+            deferred=_deferred_pb(plan_ctx),
         )
 
     @_log_errors
@@ -493,15 +519,17 @@ class ProviderServicer(rpc.ProviderServicer):
         caps = _extract_capabilities(request)
         if prior_state is None and planned_state is not None:
             # Create
-            ctx = CreateContext(diags, type_name, caps)
-            new_state = inst.create(ctx, planned_state)
+            apply_ctx = CreateContext(diags, type_name, caps)
+            new_state = inst.create(apply_ctx, planned_state)
         elif prior_state is not None and planned_state is None:
             # Delete
-            new_state = inst.delete(DeleteContext(diags, type_name, caps), prior_state)
+            apply_ctx = DeleteContext(diags, type_name, caps)
+            new_state = inst.delete(apply_ctx, prior_state)
         else:
             prior_state = cast(dict, prior_state)
             planned_state = cast(dict, planned_state)
-            new_state = inst.update(UpdateContext(diags, type_name, caps), prior_state, planned_state)
+            apply_ctx = UpdateContext(diags, type_name, caps)
+            new_state = inst.update(apply_ctx, prior_state, planned_state)
 
         # We use the planned field values if they are semantically equivalent to the new state.
         # For most fields on update and create, the TF client will have already done the hard work
@@ -544,6 +572,7 @@ class ProviderServicer(rpc.ProviderServicer):
                 else []
             ),
             diagnostics=ctx.diagnostics.to_pb(),
+            deferred=_deferred_pb(ctx),
         )
 
     @_log_errors
@@ -565,6 +594,7 @@ class ProviderServicer(rpc.ProviderServicer):
         return pb.ReadDataSource.Response(
             diagnostics=diags.to_pb(),
             state=to_dynamic_value(state),
+            deferred=_deferred_pb(ctx),
         )
 
     # ----------------- Functions ----------------- #
@@ -626,6 +656,16 @@ class ProviderServicer(rpc.ProviderServicer):
             return pb.CallFunction.Response(result=to_dynamic_value(encoded_result))
         except Exception as e:
             return pb.CallFunction.Response(error=pb.FunctionError(text=f"Function execution error: {str(e)}"))
+
+    # ----------------- Resource identity (proto 6.9 stubs) ----------------- #
+
+    @_log_errors
+    def GetResourceIdentitySchemas(self, request: pb.GetResourceIdentitySchemas.Request, context: grpc.ServicerContext):
+        return pb.GetResourceIdentitySchemas.Response()
+
+    @_log_errors
+    def UpgradeResourceIdentity(self, request: pb.UpgradeResourceIdentity.Request, context: grpc.ServicerContext):
+        return pb.UpgradeResourceIdentity.Response()
 
     # ----------------- Graceful shutdown ----------------- #
     @_log_errors
