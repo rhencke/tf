@@ -48,6 +48,7 @@ jobs:
       matrix:
         python-version: ["3.13"]
         tf-version:
+          - "opentofu@v1.11.5"
           - "opentofu@v1.10.5"
           - "opentofu@v1.9.3"
         e2e-project:
