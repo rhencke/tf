@@ -10,8 +10,8 @@ requires-python = '>=3.11,<4.0'
 dependencies = [
   'msgpack (>=1.1.0,<2.0.0)',
   'cryptography (>43)',
-  'grpcio (>=1.67.1,<2.0.0)',
-  'protobuf (>=5.28.3,<6.0.0)'
+  'grpcio (>=1.78.0,<2.0.0)',
+  'protobuf (>=6.31.1,<7.0.0)'
 ]
 
 [project.urls]
@@ -34,7 +34,7 @@ classifiers = [
 
 
 [tool.poetry.group.dev.dependencies]
-grpcio-tools = "^1.67.1"
+grpcio-tools = "^1.78.0"
 ruff = "^0.7.2"
 coverage = "^7.6.4"
 pyre-check = "^0.9.23"

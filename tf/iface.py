@@ -1,12 +1,51 @@
 from abc import abstractmethod
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Protocol, Sequence, Type, TypeAlias
+from dataclasses import dataclass, field
+from enum import IntEnum
+from typing import TYPE_CHECKING, Optional, Protocol, Sequence, Type, TypeAlias, TypeGuard, runtime_checkable
 
-from tf.schema import Attribute, NestedBlock, Schema
+from tf.schema import Attribute, IdentitySchema, NestedBlock, Schema
 from tf.utils import Diagnostics
 
 if TYPE_CHECKING:  # pragma: no cover
     from tf.function import Function
+
+
+@dataclass
+class ClientCapabilities:
+    """Capabilities advertised by Terraform on each request (proto 6.6).
+
+    Providers that do not need to inspect these can ignore them — the defaults
+    (both False) are safe for all existing behaviour.
+
+    .. seealso::
+        Write-only arguments: https://developer.hashicorp.com/terraform/plugin/framework/resources/write-only-arguments
+        Deferred actions: https://developer.hashicorp.com/terraform/plugin/framework/actions
+    """
+
+    deferral_allowed: bool = False
+    """Terraform will retry a deferred plan in a subsequent planning cycle."""
+
+    write_only_attributes_allowed: bool = False
+    """Terraform supports the write_only attribute protocol extension."""
+
+
+class DeferReason(IntEnum):
+    """Reason a provider is deferring a resource operation (proto 6.6).
+
+    Pass one of these to ``ctx.defer()`` to signal that the current operation
+    cannot be completed yet.  Terraform will retry the plan in a subsequent
+    planning cycle when ``client_capabilities.deferral_allowed`` is True.
+
+    .. seealso:: https://developer.hashicorp.com/terraform/plugin/framework/actions/implementation
+    """
+
+    UNKNOWN = 0
+    RESOURCE_CONFIG_UNKNOWN = 1
+    """One or more resource config values are not yet known."""
+    PROVIDER_CONFIG_UNKNOWN = 2
+    """The provider configuration is not yet fully known."""
+    ABSENT_PREREQ = 3
+    """A prerequisite resource does not yet exist."""
 
 
 State: TypeAlias = dict
@@ -42,6 +81,36 @@ class AbstractResource(Protocol):
 class _Context:
     diagnostics: Diagnostics
     type_name: str
+    client_capabilities: ClientCapabilities = field(default_factory=ClientCapabilities)
+    current_identity: Optional[dict] = field(default=None)
+    _deferred: Optional[DeferReason] = field(default=None, init=False, repr=False)
+    _identity_out: Optional[dict] = field(default=None, init=False, repr=False)
+
+    def set_identity(self, identity: dict) -> None:
+        """Set the resource identity to return to Terraform.
+
+        Call this from ``create``, ``update``, or ``read`` to provide the
+        stable identity of the resource.
+
+        .. note::
+            The API surface is defined but CRUD wiring is not yet active.
+            ``set_identity()`` stores the value on the context but the framework
+            does not yet attach it to RPC responses.  Full wiring is deferred
+            until OpenTofu ships support (panics on GetResourceIdentitySchemas
+            as of v1.11).  Terraform (HashiCorp) supports this from v1.12.
+        """
+        self._identity_out = identity
+
+    def defer(self, reason: DeferReason = DeferReason.RESOURCE_CONFIG_UNKNOWN) -> None:
+        """Signal that this operation cannot be completed yet.
+
+        Terraform will retry the plan in a subsequent planning cycle.  Only
+        meaningful when ``self.client_capabilities.deferral_allowed`` is True;
+        calling ``defer()`` when deferral is not allowed will still set the
+        flag and the framework will encode it in the response, but Terraform
+        may treat it as an error.
+        """
+        self._deferred = reason
 
 
 class ReadDataContext(_Context): ...
@@ -117,7 +186,7 @@ class ImportContext(_Context): ...
 
 @dataclass
 class PlanContext(_Context):
-    changed_fields: set[str]
+    changed_fields: set[str] = field(default_factory=set)
 
 
 class Resource(AbstractResource, Protocol):
@@ -182,9 +251,112 @@ class Resource(AbstractResource, Protocol):
         return old
 
 
+class OpenContext(_Context): ...
+
+
+class EphemeralResource(Protocol):
+    """An ephemeral resource exists only during plan/apply — never persisted to state.
+
+    Right semantic for one-shot operations (commands, URI fetches, scripts) where
+    drift detection is meaningless.
+    """
+
+    @classmethod
+    @abstractmethod
+    def get_name(cls) -> str:
+        """Short name (without provider prefix). The provider prefix is added by the servicer."""
+
+    @classmethod
+    @abstractmethod
+    def get_schema(cls) -> Optional[Schema]:
+        """Schema for this ephemeral resource, or None."""
+
+    @abstractmethod
+    def validate(self, diags: Diagnostics, config: Config):
+        """Validate the resource configuration."""
+
+    @abstractmethod
+    def open(self, ctx: OpenContext, config: Config) -> State:
+        """Execute and return results. Called on OpenEphemeralResource.
+
+        :param ctx: Context carrying diagnostics, client capabilities, and defer support.
+        :param config: The decoded configuration dict.
+        """
+
+    def close(self, diags: Diagnostics, private: bytes) -> None:
+        """Finalize. Called on CloseEphemeralResource. Override to release resources."""
+
+
 def is_importable(klass: Type[Resource]) -> bool:
     """Has the resource implemented the import_ method"""
     return hasattr(klass, "import_") and klass.import_ is not Resource.import_
+
+
+@runtime_checkable
+class ResourceWithIdentity(Protocol):
+    """Mixin protocol for resources that expose a stable identity (proto 6.9).
+
+    Implement this alongside :class:`Resource` to opt into Terraform's identity
+    protocol.  The identity schema describes the minimal set of attributes that
+    uniquely identify the resource instance — used for import and cross-provider
+    move operations.
+
+    .. seealso:: https://developer.hashicorp.com/terraform/plugin/framework/resources/identity
+
+    In your ``create``, ``update``, and ``read`` implementations call
+    ``ctx.set_identity({"attr": value, ...})`` to record the identity on the
+    context.  As of now, this only stores the identity on the context; wiring
+    it into CRUD responses and the Terraform protocol encoding is deferred and
+    may be added in a future version.
+
+    Example::
+
+        class MyResource(Resource, ResourceWithIdentity):
+            @classmethod
+            def get_identity_schema(cls) -> IdentitySchema:
+                return IdentitySchema(
+                    attributes=[
+                        IdentityAttribute("id", types.String(), required_for_import=True),
+                    ]
+                )
+
+            def create(self, ctx: CreateContext, planned: State) -> Optional[State]:
+                result = _create_thing(planned)
+                ctx.set_identity({"id": result["id"]})
+                return result
+    """
+
+    @classmethod
+    @abstractmethod
+    def get_identity_schema(cls) -> IdentitySchema:
+        """Return the identity schema for this resource type."""
+
+
+@runtime_checkable
+class ResourceWithUpgradeIdentity(Protocol):
+    """Mixin for resources that can migrate old identity data to a new schema.
+
+    When :attr:`IdentitySchema.version` is incremented, Terraform may send
+    identity data encoded with an older schema version.  Implement this mixin
+    to convert old identity dicts to the current shape.
+
+    .. seealso:: https://developer.hashicorp.com/terraform/plugin/framework/resources/identity-upgrade
+    """
+
+    @abstractmethod
+    def upgrade_identity(self, ctx: UpgradeContext, version: int, old_identity: dict) -> Optional[dict]:
+        """Upgrade ``old_identity`` (encoded at ``version``) to the current schema.
+
+        :param ctx: Context carrying diagnostics.
+        :param version: The schema version the identity data was encoded with.
+        :param old_identity: The decoded identity dict from the older schema.
+        :returns: The identity dict in the current schema shape.
+        """
+
+
+def has_identity(klass: Type[Resource]) -> TypeGuard[Type[ResourceWithIdentity]]:
+    """Return True if *klass* implements :class:`ResourceWithIdentity`."""
+    return issubclass(klass, ResourceWithIdentity)
 
 
 class Provider(Protocol):
@@ -220,6 +392,10 @@ class Provider(Protocol):
         """Get all the function types that this provider supports"""
         return []
 
+    def get_ephemeral_resources(self) -> list[Type[EphemeralResource]]:
+        """Get all the ephemeral resource types that this provider supports"""
+        return []
+
     def new_resource(self, klass: Type[Resource]) -> Resource:
         return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__
 
@@ -227,4 +403,7 @@ class Provider(Protocol):
         return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__
 
     def new_function(self, klass: Type["Function"]) -> "Function":
+        return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__
+
+    def new_ephemeral_resource(self, klass: Type[EphemeralResource]) -> EphemeralResource:
         return klass(self)  # pyre-ignore[19]: noqa: Don't care about __init__

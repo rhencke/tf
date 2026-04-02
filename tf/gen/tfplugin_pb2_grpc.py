@@ -5,7 +5,7 @@ import warnings
 
 from tf.gen import tfplugin_pb2 as tf_dot_gen_dot_tfplugin__pb2
 
-GRPC_GENERATED_VERSION = '1.67.1'
+GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in tf/gen/tfplugin_pb2_grpc.py depends on'
+        + ' but the generated code in tf/gen/tfplugin_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -45,6 +45,11 @@ class ProviderStub(object):
                 request_serializer=tf_dot_gen_dot_tfplugin__pb2.GetProviderSchema.Request.SerializeToString,
                 response_deserializer=tf_dot_gen_dot_tfplugin__pb2.GetProviderSchema.Response.FromString,
                 _registered_method=True)
+        self.GetResourceIdentitySchemas = channel.unary_unary(
+                '/tfplugin6.Provider/GetResourceIdentitySchemas',
+                request_serializer=tf_dot_gen_dot_tfplugin__pb2.GetResourceIdentitySchemas.Request.SerializeToString,
+                response_deserializer=tf_dot_gen_dot_tfplugin__pb2.GetResourceIdentitySchemas.Response.FromString,
+                _registered_method=True)
         self.ValidateProviderConfig = channel.unary_unary(
                 '/tfplugin6.Provider/ValidateProviderConfig',
                 request_serializer=tf_dot_gen_dot_tfplugin__pb2.ValidateProviderConfig.Request.SerializeToString,
@@ -64,6 +69,11 @@ class ProviderStub(object):
                 '/tfplugin6.Provider/UpgradeResourceState',
                 request_serializer=tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceState.Request.SerializeToString,
                 response_deserializer=tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceState.Response.FromString,
+                _registered_method=True)
+        self.UpgradeResourceIdentity = channel.unary_unary(
+                '/tfplugin6.Provider/UpgradeResourceIdentity',
+                request_serializer=tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceIdentity.Request.SerializeToString,
+                response_deserializer=tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceIdentity.Response.FromString,
                 _registered_method=True)
         self.ConfigureProvider = channel.unary_unary(
                 '/tfplugin6.Provider/ConfigureProvider',
@@ -99,6 +109,26 @@ class ProviderStub(object):
                 '/tfplugin6.Provider/ReadDataSource',
                 request_serializer=tf_dot_gen_dot_tfplugin__pb2.ReadDataSource.Request.SerializeToString,
                 response_deserializer=tf_dot_gen_dot_tfplugin__pb2.ReadDataSource.Response.FromString,
+                _registered_method=True)
+        self.ValidateEphemeralResourceConfig = channel.unary_unary(
+                '/tfplugin6.Provider/ValidateEphemeralResourceConfig',
+                request_serializer=tf_dot_gen_dot_tfplugin__pb2.ValidateEphemeralResourceConfig.Request.SerializeToString,
+                response_deserializer=tf_dot_gen_dot_tfplugin__pb2.ValidateEphemeralResourceConfig.Response.FromString,
+                _registered_method=True)
+        self.OpenEphemeralResource = channel.unary_unary(
+                '/tfplugin6.Provider/OpenEphemeralResource',
+                request_serializer=tf_dot_gen_dot_tfplugin__pb2.OpenEphemeralResource.Request.SerializeToString,
+                response_deserializer=tf_dot_gen_dot_tfplugin__pb2.OpenEphemeralResource.Response.FromString,
+                _registered_method=True)
+        self.RenewEphemeralResource = channel.unary_unary(
+                '/tfplugin6.Provider/RenewEphemeralResource',
+                request_serializer=tf_dot_gen_dot_tfplugin__pb2.RenewEphemeralResource.Request.SerializeToString,
+                response_deserializer=tf_dot_gen_dot_tfplugin__pb2.RenewEphemeralResource.Response.FromString,
+                _registered_method=True)
+        self.CloseEphemeralResource = channel.unary_unary(
+                '/tfplugin6.Provider/CloseEphemeralResource',
+                request_serializer=tf_dot_gen_dot_tfplugin__pb2.CloseEphemeralResource.Request.SerializeToString,
+                response_deserializer=tf_dot_gen_dot_tfplugin__pb2.CloseEphemeralResource.Response.FromString,
                 _registered_method=True)
         self.GetFunctions = channel.unary_unary(
                 '/tfplugin6.Provider/GetFunctions',
@@ -140,6 +170,14 @@ class ProviderServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetResourceIdentitySchemas(self, request, context):
+        """GetResourceIdentitySchemas returns the identity schemas for all managed
+        resources.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def ValidateProviderConfig(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -160,6 +198,14 @@ class ProviderServicer(object):
 
     def UpgradeResourceState(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpgradeResourceIdentity(self, request, context):
+        """UpgradeResourceIdentity should return the upgraded resource identity
+        data for a managed resource type.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -208,6 +254,31 @@ class ProviderServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ValidateEphemeralResourceConfig(self, request, context):
+        """////// Ephemeral Resource Lifecycle
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def OpenEphemeralResource(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RenewEphemeralResource(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CloseEphemeralResource(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetFunctions(self, request, context):
         """Functions
 
@@ -245,6 +316,11 @@ def add_ProviderServicer_to_server(servicer, server):
                     request_deserializer=tf_dot_gen_dot_tfplugin__pb2.GetProviderSchema.Request.FromString,
                     response_serializer=tf_dot_gen_dot_tfplugin__pb2.GetProviderSchema.Response.SerializeToString,
             ),
+            'GetResourceIdentitySchemas': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetResourceIdentitySchemas,
+                    request_deserializer=tf_dot_gen_dot_tfplugin__pb2.GetResourceIdentitySchemas.Request.FromString,
+                    response_serializer=tf_dot_gen_dot_tfplugin__pb2.GetResourceIdentitySchemas.Response.SerializeToString,
+            ),
             'ValidateProviderConfig': grpc.unary_unary_rpc_method_handler(
                     servicer.ValidateProviderConfig,
                     request_deserializer=tf_dot_gen_dot_tfplugin__pb2.ValidateProviderConfig.Request.FromString,
@@ -264,6 +340,11 @@ def add_ProviderServicer_to_server(servicer, server):
                     servicer.UpgradeResourceState,
                     request_deserializer=tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceState.Request.FromString,
                     response_serializer=tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceState.Response.SerializeToString,
+            ),
+            'UpgradeResourceIdentity': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpgradeResourceIdentity,
+                    request_deserializer=tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceIdentity.Request.FromString,
+                    response_serializer=tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceIdentity.Response.SerializeToString,
             ),
             'ConfigureProvider': grpc.unary_unary_rpc_method_handler(
                     servicer.ConfigureProvider,
@@ -299,6 +380,26 @@ def add_ProviderServicer_to_server(servicer, server):
                     servicer.ReadDataSource,
                     request_deserializer=tf_dot_gen_dot_tfplugin__pb2.ReadDataSource.Request.FromString,
                     response_serializer=tf_dot_gen_dot_tfplugin__pb2.ReadDataSource.Response.SerializeToString,
+            ),
+            'ValidateEphemeralResourceConfig': grpc.unary_unary_rpc_method_handler(
+                    servicer.ValidateEphemeralResourceConfig,
+                    request_deserializer=tf_dot_gen_dot_tfplugin__pb2.ValidateEphemeralResourceConfig.Request.FromString,
+                    response_serializer=tf_dot_gen_dot_tfplugin__pb2.ValidateEphemeralResourceConfig.Response.SerializeToString,
+            ),
+            'OpenEphemeralResource': grpc.unary_unary_rpc_method_handler(
+                    servicer.OpenEphemeralResource,
+                    request_deserializer=tf_dot_gen_dot_tfplugin__pb2.OpenEphemeralResource.Request.FromString,
+                    response_serializer=tf_dot_gen_dot_tfplugin__pb2.OpenEphemeralResource.Response.SerializeToString,
+            ),
+            'RenewEphemeralResource': grpc.unary_unary_rpc_method_handler(
+                    servicer.RenewEphemeralResource,
+                    request_deserializer=tf_dot_gen_dot_tfplugin__pb2.RenewEphemeralResource.Request.FromString,
+                    response_serializer=tf_dot_gen_dot_tfplugin__pb2.RenewEphemeralResource.Response.SerializeToString,
+            ),
+            'CloseEphemeralResource': grpc.unary_unary_rpc_method_handler(
+                    servicer.CloseEphemeralResource,
+                    request_deserializer=tf_dot_gen_dot_tfplugin__pb2.CloseEphemeralResource.Request.FromString,
+                    response_serializer=tf_dot_gen_dot_tfplugin__pb2.CloseEphemeralResource.Response.SerializeToString,
             ),
             'GetFunctions': grpc.unary_unary_rpc_method_handler(
                     servicer.GetFunctions,
@@ -371,6 +472,33 @@ class Provider(object):
             '/tfplugin6.Provider/GetProviderSchema',
             tf_dot_gen_dot_tfplugin__pb2.GetProviderSchema.Request.SerializeToString,
             tf_dot_gen_dot_tfplugin__pb2.GetProviderSchema.Response.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetResourceIdentitySchemas(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tfplugin6.Provider/GetResourceIdentitySchemas',
+            tf_dot_gen_dot_tfplugin__pb2.GetResourceIdentitySchemas.Request.SerializeToString,
+            tf_dot_gen_dot_tfplugin__pb2.GetResourceIdentitySchemas.Response.FromString,
             options,
             channel_credentials,
             insecure,
@@ -479,6 +607,33 @@ class Provider(object):
             '/tfplugin6.Provider/UpgradeResourceState',
             tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceState.Request.SerializeToString,
             tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceState.Response.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpgradeResourceIdentity(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tfplugin6.Provider/UpgradeResourceIdentity',
+            tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceIdentity.Request.SerializeToString,
+            tf_dot_gen_dot_tfplugin__pb2.UpgradeResourceIdentity.Response.FromString,
             options,
             channel_credentials,
             insecure,
@@ -668,6 +823,114 @@ class Provider(object):
             '/tfplugin6.Provider/ReadDataSource',
             tf_dot_gen_dot_tfplugin__pb2.ReadDataSource.Request.SerializeToString,
             tf_dot_gen_dot_tfplugin__pb2.ReadDataSource.Response.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ValidateEphemeralResourceConfig(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tfplugin6.Provider/ValidateEphemeralResourceConfig',
+            tf_dot_gen_dot_tfplugin__pb2.ValidateEphemeralResourceConfig.Request.SerializeToString,
+            tf_dot_gen_dot_tfplugin__pb2.ValidateEphemeralResourceConfig.Response.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def OpenEphemeralResource(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tfplugin6.Provider/OpenEphemeralResource',
+            tf_dot_gen_dot_tfplugin__pb2.OpenEphemeralResource.Request.SerializeToString,
+            tf_dot_gen_dot_tfplugin__pb2.OpenEphemeralResource.Response.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RenewEphemeralResource(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tfplugin6.Provider/RenewEphemeralResource',
+            tf_dot_gen_dot_tfplugin__pb2.RenewEphemeralResource.Request.SerializeToString,
+            tf_dot_gen_dot_tfplugin__pb2.RenewEphemeralResource.Response.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CloseEphemeralResource(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/tfplugin6.Provider/CloseEphemeralResource',
+            tf_dot_gen_dot_tfplugin__pb2.CloseEphemeralResource.Request.SerializeToString,
+            tf_dot_gen_dot_tfplugin__pb2.CloseEphemeralResource.Response.FromString,
             options,
             channel_credentials,
             insecure,

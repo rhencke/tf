@@ -8,6 +8,8 @@ from tf.iface import (
     CreateContext,
     DataSource,
     DeleteContext,
+    EphemeralResource,
+    OpenContext,
     ReadContext,
     ReadDataContext,
     Resource,
@@ -83,6 +85,88 @@ class Constant(Resource):
         pass
 
 
+class Secret(Resource):
+    """Demonstrates write_only attributes.
+
+    `api_key` is write_only: Terraform accepts it in configuration but the
+    provider never stores it in state.  Only `key_id` (a derived public
+    identifier) appears in state after creation.
+    """
+
+    @classmethod
+    def get_name(cls) -> str:
+        return "secret"
+
+    @classmethod
+    def get_schema(cls) -> Schema:
+        return Schema(
+            attributes=[
+                Attribute("api_key", t.String(), required=True, write_only=True),
+                Attribute("key_id", t.String(), computed=True),
+            ]
+        )
+
+    @staticmethod
+    def _state_from_planned(planned: State) -> State:
+        api_key = planned.get("api_key") or ""
+        return {"api_key": api_key, "key_id": f"kid-{len(api_key)}"}
+
+    def create(self, ctx: CreateContext, planned: State) -> Optional[State]:
+        # The framework strips write_only attributes from state automatically;
+        # providers just return what they know.
+        return self._state_from_planned(planned)
+
+    def read(self, ctx: ReadContext, current: State) -> Optional[State]:
+        return current
+
+    def update(self, ctx: UpdateContext, current: State, planned: State) -> Optional[State]:
+        return self._state_from_planned(planned)
+
+    def delete(self, ctx: DeleteContext, current: State):
+        return None
+
+    def __init__(self, provider: "MathProvider"):
+        pass
+
+
+class ScaledSecret(EphemeralResource):
+    """Demonstrates the ephemeral resource lifecycle.
+
+    Multiplies `seed` by `multiplier` and returns the result as `value`.
+    The result exists only during plan/apply and is never written to state.
+    """
+
+    @classmethod
+    def get_name(cls) -> str:
+        return "scaled_secret"
+
+    @classmethod
+    def get_schema(cls) -> Optional[Schema]:
+        return Schema(
+            attributes=[
+                Attribute("seed", t.Number(), required=True),
+                Attribute("multiplier", t.Number(), optional=True),
+                Attribute("value", t.Number(), computed=True),
+            ]
+        )
+
+    def validate(self, diags: Diagnostics, config: Config):
+        if config.get("seed") is None:
+            diags.add_error("seed is required", "The 'seed' attribute must be set.")
+
+    def open(self, ctx: OpenContext, config: Config) -> State:
+        seed = config["seed"]
+        multiplier = config.get("multiplier") if config.get("multiplier") is not None else 1
+        return {
+            "seed": seed,
+            "multiplier": multiplier,
+            "value": seed * multiplier,
+        }
+
+    def __init__(self, provider: "MathProvider"):
+        pass
+
+
 class MathProvider(Provider):
     def get_model_prefix(self) -> str:
         return "math_"
@@ -103,7 +187,10 @@ class MathProvider(Provider):
         return [Divider]
 
     def get_resources(self) -> list[Type[Resource]]:
-        return [Constant]
+        return [Constant, Secret]
+
+    def get_ephemeral_resources(self) -> list[Type[EphemeralResource]]:
+        return [ScaledSecret]
 
 
 def main():
